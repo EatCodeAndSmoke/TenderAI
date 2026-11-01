@@ -31,13 +31,22 @@ namespace TenderAI.Api.Services
             Write all values in English. Do not include markdown, comments, extra keys, or text outside the JSON object.
             """;
 
-        public static string Build(string tenderSummary, string languageCode, bool shouldMatchTender)
+        public static string Build(
+            string tenderSummary,
+            string languageCode,
+            bool shouldMatchTender,
+            IReadOnlyCollection<string> excludedCompanyNames,
+            IReadOnlyCollection<string> excludedIndustryNames,
+            IReadOnlyCollection<string> excludedPaymentDescriptions)
         {
             var input = new
             {
                 RequestedPreferredLanguageCode = languageCode,
                 MustMatchTender = shouldMatchTender,
-                TenderSummaryReferenceOnly = tenderSummary
+                TenderSummaryReferenceOnly = tenderSummary,
+                NamesAlreadyInUseDoNotReuse = excludedCompanyNames,
+                ActivitiesAlreadyAssignedPreferAnother = excludedIndustryNames,
+                RecentPaymentsAlreadyInUseDoNotReuse = excludedPaymentDescriptions
             };
             var options = new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
             return $"{Instructions}\n\nProfile requirements (JSON data):\n{JsonSerializer.Serialize(input, options)}";
@@ -54,6 +63,13 @@ namespace TenderAI.Api.Services
 
     public interface ICustomerProfileGenerator
     {
-        Task<CustomerProfileDraft> GenerateAsync(string tenderSummary, string languageCode, bool shouldMatchTender, CancellationToken ct);
+        Task<CustomerProfileDraft> GenerateAsync(
+            string tenderSummary,
+            string languageCode,
+            bool shouldMatchTender,
+            IReadOnlyCollection<string> excludedCompanyNames,
+            IReadOnlyCollection<string> excludedIndustryNames,
+            IReadOnlyCollection<string> excludedPaymentDescriptions,
+            CancellationToken ct);
     }
 }

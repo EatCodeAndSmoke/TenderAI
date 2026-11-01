@@ -75,11 +75,11 @@ namespace TenderAI.Api.Controllers
             {
                 return Problem(statusCode: StatusCodes.Status400BadRequest, title: ex.Message);
             }
-            catch (CustomerProfileGenerationException)
+            catch (CustomerProfileGenerationException ex)
             {
                 return Problem(
                     statusCode: StatusCodes.Status502BadGateway,
-                    title: "Couldn't generate customer profiles with Amazon Bedrock. No customers were saved.");
+                    title: ex.Message);
             }
         }
 

@@ -20,6 +20,9 @@ namespace TenderAI.Api.Services
             string tenderSummary,
             string languageCode,
             bool shouldMatchTender,
+            IReadOnlyCollection<string> excludedCompanyNames,
+            IReadOnlyCollection<string> excludedIndustryNames,
+            IReadOnlyCollection<string> excludedPaymentDescriptions,
             CancellationToken ct)
         {
             var requestBody = JsonSerializer.Serialize(new
@@ -30,7 +33,13 @@ namespace TenderAI.Api.Services
                     new
                     {
                         role = "user",
-                        content = new[] { new { text = CustomerProfilePrompt.Build(tenderSummary, languageCode, shouldMatchTender) } }
+                        content = new[] { new { text = CustomerProfilePrompt.Build(
+                            tenderSummary,
+                            languageCode,
+                            shouldMatchTender,
+                            excludedCompanyNames,
+                            excludedIndustryNames,
+                            excludedPaymentDescriptions) } }
                     }
                 },
                 inferenceConfig = new
