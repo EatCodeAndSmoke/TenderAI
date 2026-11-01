@@ -92,13 +92,28 @@ namespace TenderAI.Api.Contracts
             n.Title,
             n.Body,
             n.Buyer,
+            n.SourceUrl,
             n.Region,
             n.StartPrice,
+            n.CurrencyCode,
             n.Deadline,
-            n.PaymentTermsDays,
+            n.PaymentTermsDays > 0 ? n.PaymentTermsDays : null,
             n.Requirements,
-            n.WhyText,
+            n.MatchReason,
+            n.LoanDecisionReason,
             n.Offer is null ? null : new LoanOfferDto(n.Offer.Financing, n.Offer.Guarantee, n.Offer.PreApprovedLimit));
+
+        public static MatchDto ToMatchDto(this NotificationEntity n, string customerName) => new(
+            n.CustomerId,
+            customerName,
+            n.LotId,
+            n.Title,
+            n.StartPrice,
+            n.CurrencyCode,
+            n.MatchReason,
+            n.LoanDecisionReason,
+            n.Offer is null ? null : new LoanOfferDto(n.Offer.Financing, n.Offer.Guarantee, n.Offer.PreApprovedLimit),
+            DateTime.SpecifyKind(n.CreatedAt, DateTimeKind.Utc));
 
         // Full months between two dates, the same rule as the admin app's monthsSince()
         public static int MonthsBetween(DateOnly from, DateOnly to)

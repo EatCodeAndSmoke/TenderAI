@@ -27,7 +27,9 @@ builder.Services.AddHttpClient<UzexClient>((services, http) =>
     http.Timeout = TimeSpan.FromSeconds(uzex.TimeoutSeconds);
 });
 builder.Services.AddScoped<TenderImportService>();
-builder.Services.AddScoped<CustomerGenerationService>();
+builder.Services.AddScoped<MatchingService>();
+builder.Services.AddSingleton<ITenderMatchEvaluator, BedrockTenderMatchEvaluator>();
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IAmazonBedrockRuntime>(services =>
 {
     var region = services.GetRequiredService<IOptions<BedrockOptions>>().Value.Region;
@@ -44,23 +46,19 @@ builder.Services.AddSingleton<IAmazonBedrockRuntime>(services =>
         });
 });
 builder.Services.AddSingleton<ITenderSummarizer, BedrockTenderSummarizer>();
-builder.Services.AddSingleton<ICustomerProfileGenerator, BedrockCustomerProfileGenerator>();
 builder.Services.AddSingleton<TenderSummaryService>();
 
 var app = builder.Build();
 
-// Create the SQLite database on first run and fill it with demo data.
-// Delete the .db file to start again from the seed data.
+// Create the SQLite database on first run. Business records are loaded through the application.
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<TenderAiDbContext>();
-    if (db.Database.EnsureCreated())
-    {
-        SeedData.Seed(db);
-    }
+    db.Database.EnsureCreated();
 
     DatabaseSchema.AddMissingTables(db);
     DatabaseSchema.AddMissingColumns(db);
+    DatabaseSchema.RemoveKnownDemoRecords(db);
 }
 
 // Configure the HTTP request pipeline.

@@ -18,18 +18,19 @@ namespace TenderAI.Api.Data.Entities
         public required string Title { get; set; }
         public required string Body { get; set; }
         public required string Buyer { get; set; }
+        public required string SourceUrl { get; set; }
         public required string Region { get; set; }
 
-        // In so'm
-        public long StartPrice { get; set; }
+        public decimal StartPrice { get; set; }
+        public required string CurrencyCode { get; set; }
         public DateOnly Deadline { get; set; }
         public int PaymentTermsDays { get; set; }
 
         // What the buyer needs. Stored as a JSON array.
         public List<string> Requirements { get; set; } = [];
 
-        // Why the customer got this tender
-        public required string WhyText { get; set; }
+        public required string MatchReason { get; set; }
+        public required string LoanDecisionReason { get; set; }
 
         // Only present when the loan advisor made an offer
         public LoanOfferEntity? Offer { get; set; }

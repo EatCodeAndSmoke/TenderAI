@@ -61,6 +61,8 @@ namespace TenderAI.Api.Data
                 b.HasKey(n => n.Id);
                 b.Property(n => n.Id).HasMaxLength(20);
                 b.Property(n => n.LotId).HasMaxLength(20);
+                b.Property(n => n.CurrencyCode).HasMaxLength(3);
+                b.Property(n => n.SourceUrl).HasMaxLength(1000);
                 b.HasIndex(n => new { n.CustomerId, n.CreatedAt });
                 b.OwnsOne(n => n.Offer);
             });

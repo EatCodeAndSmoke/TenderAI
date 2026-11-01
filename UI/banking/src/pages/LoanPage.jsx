@@ -11,7 +11,9 @@ export default function LoanPage() {
   const [sent, setSent] = useState(null);
 
   const n = notifications.find((x) => x.lotId === lotId);
-  if (!n || !n.offer) return <Navigate to="/notifications" replace />;
+  if (!n || !n.offer || (n.offer.financing <= 0 && n.offer.guarantee <= 0)) {
+    return <Navigate to="/notifications" replace />;
+  }
 
   return sent
     ? <LoanSent notification={n} request={sent} />
@@ -19,12 +21,14 @@ export default function LoanPage() {
 }
 
 function LoanForm({ notification: n, customerId, onSent }) {
-  const [product, setProduct] = useState('financing');
-  const [amount, setAmount] = useState(() => money(n.offer.financing));
+  const [product, setProduct] = useState(() => n.offer.financing > 0 ? 'financing' : 'guarantee');
+  const [amount, setAmount] = useState(() => money(n.offer.financing > 0 ? n.offer.financing : n.offer.guarantee));
   const [term, setTerm] = useState('6');
   const [error, setError] = useState('');
   const amountRef = useRef(null);
 
+  const availableProducts = Object.entries(LOAN_PRODUCTS)
+    .filter(([key, item]) => n.offer[item.limitKey] > 0 && (key !== 'guarantee' || n.offer.guarantee > 0));
   const p = LOAN_PRODUCTS[product];
   const limit = n.offer[p.limitKey];
 
@@ -78,7 +82,7 @@ function LoanForm({ notification: n, customerId, onSent }) {
           <div>
             <span className="mb-1.5 block text-sm font-medium">Loan type</span>
             <div role="group" aria-label="Loan type" className="grid grid-cols-2 gap-1 rounded-xl bg-subtle p-1 text-sm">
-              {Object.entries(LOAN_PRODUCTS).map(([key, lp]) => (
+              {availableProducts.map(([key, lp]) => (
                 <button
                   key={key}
                   type="button"
@@ -107,7 +111,7 @@ function LoanForm({ notification: n, customerId, onSent }) {
               />
               <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted">so'm</span>
             </div>
-            <p className="mt-1.5 text-xs text-muted">Up to {money(limit)} so'm, pre-approved for this tender.</p>
+            <p className="mt-1.5 text-xs text-muted">Up to {money(limit)} so'm, within your pre-approved limit. The bank will review the application.</p>
             {error && <p role="alert" className="mt-1.5 text-xs font-medium text-red-600">{error}</p>}
           </div>
 

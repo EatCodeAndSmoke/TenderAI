@@ -1,4 +1,4 @@
-# Amazon Bedrock tender summaries
+# Amazon Bedrock tender summaries and matching
 
 The API defaults to Amazon Nova Micro's EU geographic inference profile:
 
@@ -6,6 +6,14 @@ The API defaults to Amazon Nova Micro's EU geographic inference profile:
 - Model ID: `eu.amazon.nova-micro-v1:0`
 
 Nova Micro has Geo inference, but not in-Region inference, in Frankfurt. The EU profile routes only within the EU geography. Its Nova Micro destination Regions are Frankfurt (`eu-central-1`), Stockholm (`eu-north-1`), Ireland (`eu-west-1`), and Paris (`eu-west-3`). The profile ID is deliberately separate from the underlying foundation-model ID: application requests use `eu.amazon.nova-micro-v1:0`, while IAM permissions must include the `amazon.nova-micro-v1:0` foundation model in each destination Region.
+
+## Tender matching
+
+Selecting **Start matching** evaluates current database customers against open UZEX tenders. For each eligible pair, the model receives the customer's OKED code and activity name, tender product details, and up to 30 incoming-payment descriptions from the preceding 12 months. Customer names, TINs, balances, and loan risk data are not sent to Bedrock. A match is saved only when both the OKED activity and payment evidence support the tender product; incomplete or ambiguous evidence fails closed.
+
+Each evaluated customer/tender pair is a billable model invocation. Runs are limited to four concurrent invocations. Loan-application invitations are calculated locally and require a pre-approved limit; suggested amounts do not exceed that limit and are not loan approvals.
+
+New databases no longer receive fictional customer or notification seed data. Load UZEX tenders and enter the current customer records before running matching. Startup removes the exact legacy sample profiles and old notifications that have no matching explanation.
 
 ## EC2 role permissions
 

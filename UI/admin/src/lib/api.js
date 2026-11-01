@@ -46,8 +46,6 @@ export const getCustomers = () => request('/customers');
 
 export const addCustomer = (record) => request('/customers', json('POST', record));
 
-export const generateCustomers = () => request('/customers/generate', { method: 'POST' });
-
 export const updateCustomer = (record) =>
   request(`/customers/${encodeURIComponent(record.customer.customerId)}`, json('PUT', record));
 
@@ -65,3 +63,9 @@ export const loadTenders = (count = 5) => request(`/tenders/load?count=${count}`
 
 // Removes every tender, with its products
 export const clearTenders = () => request('/tenders', { method: 'DELETE' });
+
+export const getMatches = () => request('/matches');
+
+export const runMatching = () => request('/matches/run', { method: 'POST' });
+
+export const clearMatches = () => request('/matches', { method: 'DELETE' });

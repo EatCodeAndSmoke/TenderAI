@@ -78,12 +78,12 @@ export default function TendersPage({ onToast }) {
   };
 
   const handleClear = async () => {
-    if (!window.confirm("Remove all tenders? This can't be undone.")) return;
+    if (!window.confirm("Remove all tenders and their matching results and Business Bank notifications? This can't be undone.")) return;
     setBusy('clear');
     try {
       await clearTenders();
       setTenders([]);
-      onToast('All tenders removed.');
+      onToast('All tenders and related matches and notifications removed.');
     } catch (err) {
       window.alert(err.message);
     } finally {

@@ -59,19 +59,31 @@ export function SessionProvider({ children }) {
     setRead(new Set());
   }, []);
 
+  const refreshNotifications = useCallback(async () => {
+    const customerId = currentId.current;
+    if (!customerId) return;
+
+    try {
+      const fresh = await getNotifications(customerId);
+      if (currentId.current === customerId) setNotifications(fresh);
+    } catch (err) {
+      if (err.status === 404 && currentId.current === customerId) logout();
+    }
+  }, [logout]);
+
   // After a refresh, show the saved notifications straight away and fetch fresh ones.
   // If the customer no longer exists, log out; if the API is down, keep the saved ones.
   useEffect(() => {
     const restoredId = stored?.customer.customerId;
     if (!restoredId) return;
-    getNotifications(restoredId)
-      .then((fresh) => {
-        if (currentId.current === restoredId) setNotifications(fresh);
-      })
-      .catch((err) => {
-        if (err.status === 404 && currentId.current === restoredId) logout();
-      });
-  }, [stored, logout]);
+    refreshNotifications();
+  }, [stored, refreshNotifications]);
+
+  useEffect(() => {
+    if (!customer) return undefined;
+    const timer = setInterval(refreshNotifications, 30_000);
+    return () => clearInterval(timer);
+  }, [customer, refreshNotifications]);
 
   const markRead = useCallback((ids) => {
     setRead((prev) => {
@@ -93,9 +105,10 @@ export function SessionProvider({ children }) {
     ringKey,
     login,
     logout,
+    refreshNotifications,
     markRead,
     ringBell
-  }), [customer, notifications, read, ringKey, login, logout, markRead, ringBell]);
+  }), [customer, notifications, read, ringKey, login, logout, refreshNotifications, markRead, ringBell]);
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }

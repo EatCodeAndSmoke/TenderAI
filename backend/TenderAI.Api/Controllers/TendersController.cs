@@ -69,12 +69,12 @@ namespace TenderAI.Api.Controllers
         }
 
         // DELETE api/tenders
-        // Removes every tender and its products. Existing legacy translation tables are left intact
-        // by schema updates and cascade-delete with their original foreign keys.
+        // Removes every tender and product, along with matching notifications that refer to them.
         [HttpDelete]
         public async Task<IActionResult> Clear(CancellationToken ct)
         {
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
+            await db.Notifications.ExecuteDeleteAsync(ct);
             await db.TenderProducts.ExecuteDeleteAsync(ct);
             await db.Tenders.ExecuteDeleteAsync(ct);
             await transaction.CommitAsync(ct);
