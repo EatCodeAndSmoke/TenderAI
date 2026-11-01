@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+/* Design tokens. Swap the brand values for TBC's exact colours if you have them. */
+@theme {
+  --font-sans: "Onest", ui-sans-serif, system-ui, sans-serif;
+
+  --color-canvas: #E9EEF3;   /* page background: cool blue-grey, not white */
+  --color-surface: #FFFFFF;  /* tables and modal */
+  --color-subtle: #F3F6F9;   /* table header, quiet fills */
+  --color-line: #D9E1E9;     /* borders */
+  --color-ink: #14233D;      /* main text: deep navy */
+  --color-muted: #56667D;    /* secondary text */
+
+  --color-cobalt: #0F2A55;      /* sidebar, bottom of the gradient */
+  --color-cobalt-top: #17407F;  /* sidebar, top of the gradient */
+  --color-cobalt-soft: #B4C4DE; /* text on the sidebar */
+
+  --color-brand-50: #E8F6F7;    /* turquoise accent */
+  --color-brand-100: #CBEDF0;
+  --color-brand-300: #74D0D9;
+  --color-brand-400: #3BB9C5;
+  --color-brand-500: #179FAC;
+  --color-brand-600: #0B7F8B;
+  --color-brand-700: #08656F;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  dialog[open] { animation: dialog-in 160ms ease-out; }
+  /* A new match arriving during "Start matching" */
+  .match-row-in { animation: match-row-in 420ms ease-out; }
+}
+@keyframes dialog-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+}
+@keyframes match-row-in {
+  from { opacity: 0; transform: translateY(-6px); background-color: var(--color-brand-50); }
+}

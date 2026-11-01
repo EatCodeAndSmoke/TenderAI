@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+/* Same design tokens as the admin app */
+@theme {
+  --font-sans: "Onest", ui-sans-serif, system-ui, sans-serif;
+
+  --color-canvas: #E9EEF3;
+  --color-surface: #FFFFFF;
+  --color-subtle: #F3F6F9;
+  --color-line: #D9E1E9;
+  --color-ink: #14233D;
+  --color-muted: #56667D;
+
+  --color-cobalt: #0F2A55;
+  --color-cobalt-top: #17407F;
+  --color-cobalt-soft: #B4C4DE;
+
+  --color-brand-50: #E8F6F7;
+  --color-brand-100: #CBEDF0;
+  --color-brand-300: #74D0D9;
+  --color-brand-400: #3BB9C5;
+  --color-brand-500: #179FAC;
+  --color-brand-600: #0B7F8B;
+  --color-brand-700: #08656F;
+}
+
+/* The bell rings once when there are unread notifications */
+@media (prefers-reduced-motion: no-preference) {
+  .bell-ring { animation: bell-ring 900ms ease-in-out; transform-origin: 50% 15%; }
+}
+@keyframes bell-ring {
+  0%, 100% { transform: rotate(0); }
+  15% { transform: rotate(14deg); }
+  30% { transform: rotate(-12deg); }
+  45% { transform: rotate(8deg); }
+  60% { transform: rotate(-5deg); }
+  75% { transform: rotate(2deg); }
+}

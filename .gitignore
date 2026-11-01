@@ -1,0 +1,12 @@
+@'
+**/.vs/
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+**/*.user
+**/*.csproj.user
+.env
+.env.*
+!.env.example
+'@ | Set-Content -LiteralPath .gitignore -Encoding ascii

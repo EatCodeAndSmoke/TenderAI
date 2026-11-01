@@ -1,0 +1,94 @@
+@TenderAI.Api_HostAddress = http://localhost:5240
+
+### List customers
+GET {{TenderAI.Api_HostAddress}}/api/customers
+
+### Get one customer
+GET {{TenderAI.Api_HostAddress}}/api/customers/C-01
+
+### Add a customer
+POST {{TenderAI.Api_HostAddress}}/api/customers
+Content-Type: application/json
+
+{
+  "customer": {
+    "customerId": "C-03",
+    "name": "Samarqand Non LLC",
+    "taxCode": "303456789",
+    "type": "LLC",
+    "industry": { "industryCode": "10710", "name": "Manufacture of bread" },
+    "address": { "regionName": "Samarkand", "districtName": "Samarkand city" },
+    "languageCode": "uz",
+    "registrationDate": "2018-09-10",
+    "customerSince": "2023-02-01"
+  },
+  "riskFeatures": {
+    "avgMonthlyInflow6m": 70000000,
+    "outstandingAmount": 0,
+    "overdueAmount": 0,
+    "maxOverdueDays12m": 0,
+    "preApprovedLimit": 100000000,
+    "kycPassed": true
+  },
+  "recentPayments": [
+    { "date": "2026-10-01", "isIncoming": true, "purposeDescription": "Payment for bread, school No 21", "amount": 5400000 }
+  ],
+  "onRegister": false
+}
+
+### Update a customer (send the full record)
+PUT {{TenderAI.Api_HostAddress}}/api/customers/C-03
+Content-Type: application/json
+
+{
+  "customer": {
+    "customerId": "C-03",
+    "name": "Samarqand Non LLC",
+    "taxCode": "303456789",
+    "type": "LLC",
+    "industry": { "industryCode": "10710", "name": "Manufacture of bread" },
+    "address": { "regionName": "Samarkand", "districtName": "Samarkand city" },
+    "languageCode": "en",
+    "registrationDate": "2018-09-10",
+    "customerSince": "2023-02-01"
+  },
+  "riskFeatures": {
+    "avgMonthlyInflow6m": 80000000,
+    "outstandingAmount": 0,
+    "overdueAmount": 0,
+    "maxOverdueDays12m": 0,
+    "preApprovedLimit": 120000000,
+    "kycPassed": true
+  },
+  "recentPayments": [],
+  "onRegister": false
+}
+
+### Log in (the password is 123 for every customer)
+POST {{TenderAI.Api_HostAddress}}/api/customers/auth
+Content-Type: application/json
+
+{ "customerId": "C-01", "password": "123" }
+
+### Notifications for a customer
+GET {{TenderAI.Api_HostAddress}}/api/customers/C-01/notifications
+
+### Delete one customer (with their payments and notifications)
+DELETE {{TenderAI.Api_HostAddress}}/api/customers/C-03
+
+### Remove all customers
+DELETE {{TenderAI.Api_HostAddress}}/api/customers
+
+### List saved tenders (with products and translations)
+GET {{TenderAI.Api_HostAddress}}/api/tenders
+
+### Get one saved tender by UZEX lot id
+GET {{TenderAI.Api_HostAddress}}/api/tenders/511680
+
+### Load the next 10 tenders from UZEX that aren't saved yet (count 1-50)
+POST {{TenderAI.Api_HostAddress}}/api/tenders/load?count=10
+
+### Remove all tenders
+DELETE {{TenderAI.Api_HostAddress}}/api/tenders
+
+###
