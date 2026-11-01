@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { LANGUAGE_NAMES } from '../data/customers.js';
-import { addCustomer, clearCustomers, deleteCustomer, generateCustomers, getCustomers } from '../lib/api.js';
+import { clearCustomers, deleteCustomer, generateCustomers, getCustomers } from '../lib/api.js';
 import { initials, money } from '../lib/format.js';
 import { BTN_PRIMARY, BTN_SECONDARY, CARD, ROW } from '../lib/styles.js';
 import { Chip, OverduePill } from '../components/badges.jsx';

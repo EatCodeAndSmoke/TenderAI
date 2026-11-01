@@ -44,6 +44,7 @@ builder.Services.AddSingleton<IAmazonBedrockRuntime>(services =>
         });
 });
 builder.Services.AddSingleton<ITenderSummarizer, BedrockTenderSummarizer>();
+builder.Services.AddSingleton<ICustomerProfileGenerator, BedrockCustomerProfileGenerator>();
 builder.Services.AddSingleton<TenderSummaryService>();
 
 var app = builder.Build();
