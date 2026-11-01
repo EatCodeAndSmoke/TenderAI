@@ -89,6 +89,7 @@ namespace TenderAI.Api.Data
             {
                 b.ToTable("TenderProducts");
                 b.Property(p => p.ProductCode).HasMaxLength(30);
+                b.Property(p => p.TechnicalSpecifications);
                 b.HasIndex(p => p.ProductCode);
             });
         }

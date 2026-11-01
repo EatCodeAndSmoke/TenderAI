@@ -14,6 +14,7 @@
         public required string SourceUrl { get; set; }
 
         public required string Name { get; set; }
+        public string? DetailedName { get; set; }
 
         // The organization that buys
         public required string BuyerName { get; set; }
@@ -52,9 +53,12 @@
         public string? DeliveryAddress { get; set; }
 
         public string? Description { get; set; }
+        public string? AdditionalDescription { get; set; }
+        public bool? HasUnparsedTechnicalDocuments { get; set; }
 
         // Qualification requirements for bidders. Stored as a JSON array.
         public List<string> Requirements { get; set; } = [];
+        public List<string> BuyerRequirements { get; set; } = [];
 
         // Languages bids can be submitted in: ru, uz, uz-Cyrl, en. Stored as a JSON array.
         public List<string> BidLanguages { get; set; } = [];
@@ -63,6 +67,7 @@
         public DateTime LoadedAt { get; set; }
 
         public string? Summary { get; set; }
+        public int? SummaryVersion { get; set; }
         public string? SummaryError { get; set; }
 
         public List<TenderProductEntity> Products { get; set; } = [];

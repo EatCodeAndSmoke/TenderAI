@@ -16,6 +16,7 @@ namespace TenderAI.Api.Data.Entities
         public string? CategoryName { get; set; }
         public required string ProductName { get; set; }
         public string? Description { get; set; }
+        public string? TechnicalSpecifications { get; set; }
 
         public decimal Quantity { get; set; }
         public string? Unit { get; set; }

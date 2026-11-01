@@ -41,28 +41,14 @@ namespace TenderAI.Api.Data
 
             try
             {
-                var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                using (var command = connection.CreateCommand())
-                {
-                    command.CommandText = "PRAGMA table_info('Tenders')";
-                    using var reader = command.ExecuteReader();
-                    while (reader.Read())
-                    {
-                        columns.Add(reader.GetString(1));
-                    }
-                }
-
-                if (!columns.Contains("Summary"))
-                {
-                    db.Database.ExecuteSqlRaw(
-                        "ALTER TABLE \"Tenders\" ADD COLUMN \"Summary\" TEXT NULL");
-                }
-
-                if (!columns.Contains("SummaryError"))
-                {
-                    db.Database.ExecuteSqlRaw(
-                        "ALTER TABLE \"Tenders\" ADD COLUMN \"SummaryError\" TEXT NULL");
-                }
+                AddColumnIfMissing(db, connection, "Tenders", "Summary");
+                AddColumnIfMissing(db, connection, "Tenders", "SummaryVersion");
+                AddColumnIfMissing(db, connection, "Tenders", "SummaryError");
+                AddColumnIfMissing(db, connection, "Tenders", "DetailedName");
+                AddColumnIfMissing(db, connection, "Tenders", "AdditionalDescription");
+                AddColumnIfMissing(db, connection, "Tenders", "HasUnparsedTechnicalDocuments");
+                AddColumnIfMissing(db, connection, "Tenders", "BuyerRequirements");
+                AddColumnIfMissing(db, connection, "TenderProducts", "TechnicalSpecifications");
             }
             finally
             {
@@ -70,6 +56,41 @@ namespace TenderAI.Api.Data
                 {
                     db.Database.CloseConnection();
                 }
+            }
+        }
+
+        private static void AddColumnIfMissing(
+            TenderAiDbContext db,
+            System.Data.Common.DbConnection connection,
+            string table,
+            string column)
+        {
+            var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = $"PRAGMA table_info(\"{table}\")";
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    columns.Add(reader.GetString(1));
+                }
+            }
+
+            if (!columns.Contains(column))
+            {
+                var sql = (table, column) switch
+                {
+                    ("Tenders", "Summary") => "ALTER TABLE \"Tenders\" ADD COLUMN \"Summary\" TEXT NULL",
+                    ("Tenders", "SummaryVersion") => "ALTER TABLE \"Tenders\" ADD COLUMN \"SummaryVersion\" INTEGER NULL",
+                    ("Tenders", "SummaryError") => "ALTER TABLE \"Tenders\" ADD COLUMN \"SummaryError\" TEXT NULL",
+                    ("Tenders", "DetailedName") => "ALTER TABLE \"Tenders\" ADD COLUMN \"DetailedName\" TEXT NULL",
+                    ("Tenders", "AdditionalDescription") => "ALTER TABLE \"Tenders\" ADD COLUMN \"AdditionalDescription\" TEXT NULL",
+                    ("Tenders", "HasUnparsedTechnicalDocuments") => "ALTER TABLE \"Tenders\" ADD COLUMN \"HasUnparsedTechnicalDocuments\" INTEGER NULL",
+                    ("Tenders", "BuyerRequirements") => "ALTER TABLE \"Tenders\" ADD COLUMN \"BuyerRequirements\" TEXT NOT NULL DEFAULT '[]'",
+                    ("TenderProducts", "TechnicalSpecifications") => "ALTER TABLE \"TenderProducts\" ADD COLUMN \"TechnicalSpecifications\" TEXT NULL",
+                    _ => throw new ArgumentOutOfRangeException(nameof(column), $"Unsupported schema column {table}.{column}.")
+                };
+                db.Database.ExecuteSqlRaw(sql);
             }
         }
 

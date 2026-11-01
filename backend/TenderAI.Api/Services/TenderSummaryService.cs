@@ -9,11 +9,14 @@ namespace TenderAI.Api.Services
         ILogger<TenderSummaryService> logger)
     {
         private const int MaxParallelTenders = 5;
+        public const int CurrentSummaryVersion = 3;
 
         public async Task<int> SummarizeMissingTendersAsync(TenderAiDbContext db, CancellationToken ct)
         {
             var tenders = await db.Tenders
-                .Where(tender => tender.Summary == null || tender.Summary == "")
+                .Where(tender => tender.Summary == null
+                    || tender.Summary == ""
+                    || tender.SummaryVersion != CurrentSummaryVersion)
                 .Include(tender => tender.Products)
                 .AsSplitQuery()
                 .ToListAsync(ct);
@@ -37,7 +40,8 @@ namespace TenderAI.Api.Services
 
         private async Task SummarizeTenderAsync(TenderEntity tender, CancellationToken ct)
         {
-            if (!string.IsNullOrWhiteSpace(tender.Summary))
+            if (!string.IsNullOrWhiteSpace(tender.Summary)
+                && tender.SummaryVersion == CurrentSummaryVersion)
             {
                 return;
             }
@@ -45,6 +49,7 @@ namespace TenderAI.Api.Services
             try
             {
                 tender.Summary = await summarizer.SummarizeAsync(tender, ct);
+                tender.SummaryVersion = CurrentSummaryVersion;
                 tender.SummaryError = null;
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)

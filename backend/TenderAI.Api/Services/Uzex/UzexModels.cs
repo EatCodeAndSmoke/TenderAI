@@ -68,7 +68,11 @@ namespace TenderAI.Api.Services.Uzex
         // These come either as JSON arrays or as strings that contain a JSON array
         public JsonElement BudgetProducts { get; set; }
         public JsonElement JsQualificationFields { get; set; }
+        public JsonElement JsFields { get; set; }
         public JsonElement Languages { get; set; }
+
+        public string? TechFilePath { get; set; }
+        public string? TechDocFilePath { get; set; }
     }
 
     public class UzexBudgetProduct
