@@ -72,11 +72,25 @@ namespace TenderAI.Api.Services
 
                 if (string.IsNullOrWhiteSpace(text))
                 {
-                    throw new InvalidOperationException("Amazon Bedrock returned an empty customer profile.");
+                    logger.LogWarning(
+                        "Amazon Bedrock returned no profile text for language {LanguageCode}; using backend-generated profile fields",
+                        languageCode);
+                    return new CustomerProfileDraft();
                 }
 
-                return JsonSerializer.Deserialize<CustomerProfileDraft>(UnwrapJson(text), ResponseOptions)
-                    ?? throw new InvalidOperationException("Amazon Bedrock returned an empty customer profile.");
+                try
+                {
+                    return JsonSerializer.Deserialize<CustomerProfileDraft>(UnwrapJson(text), ResponseOptions)
+                        ?? new CustomerProfileDraft();
+                }
+                catch (JsonException ex)
+                {
+                    logger.LogWarning(
+                        ex,
+                        "Amazon Bedrock returned malformed profile JSON for language {LanguageCode}; using backend-generated profile fields",
+                        languageCode);
+                    return new CustomerProfileDraft();
+                }
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {

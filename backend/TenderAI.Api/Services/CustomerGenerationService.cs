@@ -9,8 +9,9 @@ namespace TenderAI.Api.Services
 {
     public sealed class CustomerGenerationService(TenderAiDbContext db, ICustomerProfileGenerator profileGenerator)
     {
-        private const int MaxProfileAttempts = 3;
+        private const int MaxNameAttempts = 3;
         private static readonly Regex CustomerIdPattern = new(@"\bC[\s_-]*\d+\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        private static readonly Regex CustomerReferencePattern = new(@"\b(customer|client|account)\s*(id|no\.?|number)?\s*[:#-]?\s*\d+\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         private static readonly Regex WordsPattern = new(@"[\p{L}\p{N}]+", RegexOptions.CultureInvariant);
         private static readonly Regex LegalFormPattern = new(@"\b(LLC|Ltd|JSC|Inc)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         private static readonly (Regex Pattern, string Code, string Description)[] Industries =
@@ -30,6 +31,9 @@ namespace TenderAI.Api.Services
             (new(@"\b(fuel|petrol|gasoline|diesel)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant), "47300", "Retail sale of automotive fuel")
         ];
         private static readonly IndustryDefinition GenericIndustry = new("46900", "Non-specialized wholesale trade");
+        private static readonly string[] CompanyBrands = ["Navqiron", "Zarafshan", "Istiqlol", "Orzu", "Taraqqiyot", "Yangi Avlod", "Samarqand", "Baraka"];
+        private static readonly string[] CompanyDescriptors = ["Meridian", "Alliance", "Pioneer", "Horizon", "Central", "Golden", "Crescent", "Evergreen"];
+        private static readonly string[] CompanySectors = ["Trading", "Supplies", "Enterprise", "Industries", "Partners", "Commerce"];
 
         public async Task<IReadOnlyList<CustomerRecordDto>> GenerateAsync(CancellationToken ct)
         {
@@ -48,12 +52,16 @@ namespace TenderAI.Api.Services
                 .AsNoTracking()
                 .Select(c => new { c.CustomerId, c.TaxCode, c.Name })
                 .ToListAsync(ct);
-            var existingNames = existing.Select(c => NormalizeCompanyName(c.Name)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var usedPaymentDescriptions = (await db.CustomerPayments
+            var usedNames = existing
+                .Select(c => NormalizeCompanyName(c.Name))
+                .Where(name => name.Length > 0)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var usedPayments = (await db.CustomerPayments
                 .AsNoTracking()
                 .Select(payment => payment.PurposeDescription)
                 .ToListAsync(ct))
                 .Select(NormalizePaymentDescription)
+                .Where(description => description.Length > 0)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             var firstMatchingTender = Pick(tenders);
@@ -63,70 +71,53 @@ namespace TenderAI.Api.Services
             var canUseDistinctActivities = firstExpectedIndustry is not null
                 && secondExpectedIndustry is not null
                 && !StringComparer.Ordinal.Equals(firstExpectedIndustry.Code, secondExpectedIndustry.Code);
-            var unmatchedTender = Pick(tenders);
             var plans = new[]
             {
                 new GenerationPlan("en", true, true, firstMatchingTender, firstExpectedIndustry, Random.Shared.Next(24, 61), false),
                 new GenerationPlan("ru", true, false, secondMatchingTender, secondExpectedIndustry, 18, canUseDistinctActivities),
-                new GenerationPlan("uz", false, false, unmatchedTender, null, 6, false)
+                new GenerationPlan("uz", false, false, Pick(tenders), null, 6, false)
             };
 
-            var initialDrafts = await Task.WhenAll(plans.Select(plan => RequestDraftAsync(
-                plan,
-                existingNames,
-                ct)));
+            // The first AI requests run concurrently; collisions are resolved in order below.
+            var drafts = await Task.WhenAll(plans.Select(plan => RequestDraftAsync(plan, usedNames, ct)));
             var accepted = new List<ValidatedProfile>(plans.Length);
-            foreach (var (plan, initialDraft) in plans.Zip(initialDrafts))
+            foreach (var (plan, initialDraft) in plans.Zip(drafts))
             {
                 var draft = initialDraft;
-                for (var attempt = 1; attempt <= MaxProfileAttempts; attempt++)
+                string? companyName = null;
+                for (var attempt = 1; attempt <= MaxNameAttempts; attempt++)
                 {
-                    var validated = ValidateDraft(draft, plan);
-                    var normalizedName = NormalizeCompanyName(validated.CompanyName);
-                    var activityMismatch = plan.ExpectedIndustry is not null
-                        && !StringComparer.Ordinal.Equals(plan.ExpectedIndustry.Code, validated.Industry.Code);
-                    var duplicateName = existingNames.Contains(normalizedName)
-                        || accepted.Any(profile => StringComparer.OrdinalIgnoreCase.Equals(profile.NormalizedName, normalizedName));
-                    var duplicateActivity = plan.RequireDistinctActivity
-                        && accepted.Any(profile => StringComparer.Ordinal.Equals(profile.Industry.Code, validated.Industry.Code));
-                    var nonMatchingActivityOverlap = !plan.MatchesTender
-                        && accepted.Any(profile => profile.Plan.MatchesTender
-                            && StringComparer.Ordinal.Equals(profile.Industry.Code, validated.Industry.Code));
-                    var duplicatePayment = validated.PaymentDescriptions.Any(payment =>
-                        usedPaymentDescriptions.Contains(NormalizePaymentDescription(payment)));
-                    if (!activityMismatch
-                        && !duplicateName
-                        && !duplicateActivity
-                        && !nonMatchingActivityOverlap
-                        && !duplicatePayment)
+                    companyName = NormalizeCompanyNameForDisplay(draft.CompanyName, plan.Tender.Summary);
+                    var nameKey = companyName is null ? "" : NormalizeCompanyName(companyName);
+                    if (companyName is not null && !usedNames.Contains(nameKey))
                     {
-                        accepted.Add(validated with { NormalizedName = normalizedName });
-                        foreach (var payment in validated.PaymentDescriptions)
-                        {
-                            usedPaymentDescriptions.Add(NormalizePaymentDescription(payment));
-                        }
                         break;
                     }
 
-                    if (attempt >= MaxProfileAttempts)
+                    companyName = null;
+                    if (attempt < MaxNameAttempts)
                     {
-                        var issue = duplicateName
-                            ? "a duplicate company name"
-                            : activityMismatch ? "an activity that does not match its tender"
-                            : duplicateActivity || nonMatchingActivityOverlap ? "a duplicate OKED activity"
-                            : "a duplicate payment description";
-                        throw new CustomerProfileGenerationException(
-                            $"Amazon Bedrock couldn't generate a unique profile after {MaxProfileAttempts} attempts ({issue}). No customers were saved.");
+                        var exclusions = usedNames.ToArray();
+                        draft = await RequestDraftAsync(plan, exclusions, ct);
                     }
+                }
 
-                    var excludedNames = existingNames
-                        .Concat(accepted.Select(profile => profile.NormalizedName))
-                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                    var excludedActivities = accepted
-                        .Select(profile => profile.Industry.Description)
-                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                    var retryPayments = usedPaymentDescriptions.ToArray();
-                    draft = await RequestDraftAsync(plan, excludedNames, excludedActivities, retryPayments, ct);
+                // Bad model text or repeated names are repaired locally; Bedrock request failures still propagate.
+                companyName ??= CreateUniqueCompanyName(usedNames);
+                var industry = ResolveIndustry(draft.IndustryName, plan, accepted);
+                var paymentDescriptions = plan.MatchesTender
+                    ? NormalizePaymentDescriptions(
+                        draft.RecentPaymentDescriptions,
+                        industry,
+                        plan.Tender.Summary,
+                        usedPayments)
+                    : [];
+                var profile = new ValidatedProfile(plan, companyName, industry, paymentDescriptions);
+                accepted.Add(profile);
+                usedNames.Add(NormalizeCompanyName(companyName));
+                foreach (var description in paymentDescriptions)
+                {
+                    usedPayments.Add(NormalizePaymentDescription(description));
                 }
             }
 
@@ -150,21 +141,13 @@ namespace TenderAI.Api.Services
             GenerationPlan plan,
             IReadOnlyCollection<string> excludedNames,
             CancellationToken ct) =>
-            RequestDraftAsync(plan, excludedNames, [], [], ct);
-
-        private Task<CustomerProfileDraft> RequestDraftAsync(
-            GenerationPlan plan,
-            IReadOnlyCollection<string> excludedNames,
-            IReadOnlyCollection<string> excludedActivities,
-            IReadOnlyCollection<string> excludedPaymentDescriptions,
-            CancellationToken ct) =>
             profileGenerator.GenerateAsync(
                 plan.Tender.Summary,
                 plan.LanguageCode,
                 plan.MatchesTender,
                 excludedNames,
-                excludedActivities,
-                excludedPaymentDescriptions,
+                [],
+                [],
                 ct);
 
         private static CustomerEntity CreateCustomer(CustomerIdentity identity, ValidatedProfile profile, DateOnly today)
@@ -215,97 +198,158 @@ namespace TenderAI.Api.Services
             };
         }
 
-        private static ValidatedProfile ValidateDraft(CustomerProfileDraft draft, GenerationPlan plan)
+        private static IndustryDefinition ResolveIndustry(
+            string? modelActivity,
+            GenerationPlan plan,
+            IReadOnlyCollection<ValidatedProfile> accepted)
         {
-            var companyName = draft.CompanyName?.Trim();
-            if (string.IsNullOrWhiteSpace(companyName)
-                || companyName.Length > 160
-                || WordsPattern.Matches(companyName).Count > 10)
+            if (plan.MatchesTender && plan.ExpectedIndustry is not null)
             {
-                throw InvalidProfile("The generated company name is missing or too long.");
+                return plan.ExpectedIndustry;
             }
 
-            var industryName = draft.IndustryName?.Trim();
-            if (string.IsNullOrWhiteSpace(industryName)
-                || industryName.Length > 100
-                || WordsPattern.Matches(industryName).Count > 9)
+            var proposed = FindIndustry(modelActivity ?? "") ?? GenericIndustry;
+            if (!plan.MatchesTender)
             {
-                throw InvalidProfile("The generated industry activity is missing or too long.");
-            }
-
-            if (draft.MatchesTender != plan.MatchesTender)
-            {
-                throw InvalidProfile("The generated profile didn't meet its assigned tender-fit requirement.");
-            }
-
-            if (ContainsCustomerId(companyName) || ContainsCustomerId(industryName))
-            {
-                throw InvalidProfile("Generated display text must not contain a customer ID.");
-            }
-
-            if (ContainsLongTenderPhrase(companyName, plan.Tender.Summary)
-                || ContainsLongTenderPhrase(industryName, plan.Tender.Summary))
-            {
-                throw InvalidProfile("Generated display text copied too much wording from the tender summary.");
-            }
-
-            var paymentDescriptions = draft.RecentPaymentDescriptions;
-            if (plan.MatchesTender)
-            {
-                if (paymentDescriptions is null || paymentDescriptions.Count != 3)
+                var matchingCodes = accepted
+                    .Where(profile => profile.Plan.MatchesTender)
+                    .Select(profile => profile.Industry.Code)
+                    .ToHashSet(StringComparer.Ordinal);
+                if (matchingCodes.Contains(proposed.Code))
                 {
-                    throw InvalidProfile("A matching profile must contain exactly three recent payment descriptions.");
+                    proposed = AllIndustries().First(industry => !matchingCodes.Contains(industry.Code));
                 }
-
-                if (paymentDescriptions.Any(payment => string.IsNullOrWhiteSpace(payment)
-                    || payment.Trim().Length > 120
-                    || WordsPattern.Matches(payment).Count > 14))
-                {
-                    throw InvalidProfile("A generated payment description is missing or too long.");
-                }
-
-                var payments = paymentDescriptions.Select(payment => payment.Trim()).ToArray();
-                if (payments.Distinct(StringComparer.OrdinalIgnoreCase).Count() != 3
-                    || !ArePaymentDescriptionsVaried(payments))
-                {
-                    throw InvalidProfile("Recent payment descriptions must be distinct and meaningfully varied.");
-                }
-
-                if (payments.Any(payment => ContainsCustomerId(payment) || ContainsLongTenderPhrase(payment, plan.Tender.Summary)))
-                {
-                    throw InvalidProfile("A payment description contains an ID or copied tender wording.");
-                }
-
-                return new ValidatedProfile(
-                    plan,
-                    AddLegalForm(companyName),
-                    ResolveIndustry(industryName),
-                    payments);
             }
 
-            if (paymentDescriptions is { Count: > 0 })
-            {
-                throw InvalidProfile("The non-matching profile must not contain tender-related payments.");
-            }
-
-            return new ValidatedProfile(plan, AddLegalForm(companyName), ResolveIndustry(industryName), []);
+            return proposed;
         }
 
-        private static bool ContainsCustomerId(string value) =>
-            CustomerIdPattern.IsMatch(value)
-            || Regex.IsMatch(
-                value,
-                @"\b(customer|client|account)\s*(id|no\.?|number)?\s*[:#-]?\s*\d+\b",
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        private static IReadOnlyList<string> NormalizePaymentDescriptions(
+            IReadOnlyList<string>? modelDescriptions,
+            IndustryDefinition industry,
+            string tenderSummary,
+            IReadOnlySet<string> alreadyUsed)
+        {
+            if (modelDescriptions is { Count: 3 })
+            {
+                var cleaned = modelDescriptions
+                    .Select(description => CleanPaymentDescription(description, tenderSummary))
+                    .ToArray();
+                if (cleaned.All(description => description is not null)
+                    && cleaned.Distinct(StringComparer.OrdinalIgnoreCase).Count() == 3
+                    && ArePaymentDescriptionsVaried(cleaned!)
+                    && cleaned.All(description => !alreadyUsed.Contains(NormalizePaymentDescription(description!))))
+                {
+                    return cleaned.Select(description => description!).ToArray();
+                }
+            }
 
-        private static bool ArePaymentDescriptionsVaried(IReadOnlyList<string> descriptions)
+            return CreateUniquePaymentDescriptions(industry, alreadyUsed);
+        }
+
+        private static string? CleanPaymentDescription(string? value, string tenderSummary)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return null;
+            var cleaned = CustomerIdPattern.Replace(value, " ");
+            cleaned = CustomerReferencePattern.Replace(cleaned, " ");
+            cleaned = Regex.Replace(cleaned, @"\s+", " ").Trim(' ', ',', '.', ';', ':', '-');
+            if (cleaned.Length is < 8 or > 120
+                || WordsPattern.Matches(cleaned).Count > 14
+                || ContainsLongTenderPhrase(cleaned, tenderSummary))
+            {
+                return null;
+            }
+
+            return cleaned;
+        }
+
+        private static IReadOnlyList<string> CreateUniquePaymentDescriptions(
+            IndustryDefinition industry,
+            IReadOnlySet<string> alreadyUsed)
+        {
+            var templates = industry.Code switch
+            {
+                "10710" => new[]
+                {
+                    "Payment for bread delivery, contract No",
+                    "Bakery order settlement, invoice No",
+                    "Purchase of flour and yeast, invoice No"
+                },
+                "46390" => new[]
+                {
+                    "Payment for food supply, contract No",
+                    "Grocery delivery settlement, invoice No",
+                    "Purchase of rice and cooking oil, invoice No"
+                },
+                "46499" => new[]
+                {
+                    "Payment for office paper delivery, contract No",
+                    "Stationery order settlement, invoice No",
+                    "Purchase of printer supplies, invoice No"
+                },
+                "81210" => new[]
+                {
+                    "Payment for office cleaning, contract No",
+                    "Monthly janitorial service, invoice No",
+                    "Purchase of cleaning supplies, invoice No"
+                },
+                _ => new[]
+                {
+                    $"Payment for {industry.Description.ToLowerInvariant()}, contract No",
+                    $"Service order settlement for {industry.Description.ToLowerInvariant()}, invoice No",
+                    $"Purchase related to {industry.Description.ToLowerInvariant()}, invoice No"
+                }
+            };
+
+            var result = new List<string>(3);
+            var used = alreadyUsed.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var template in templates)
+            {
+                string description;
+                do
+                {
+                    description = $"{template} {Random.Shared.Next(10_000, 1_000_000)}";
+                } while (!used.Add(NormalizePaymentDescription(description)));
+
+                result.Add(description);
+            }
+
+            return result;
+        }
+
+        private static string? NormalizeCompanyNameForDisplay(string? value, string tenderSummary)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return null;
+            var name = CustomerIdPattern.Replace(value, " ");
+            name = CustomerReferencePattern.Replace(name, " ");
+            name = Regex.Replace(name, @"\s+", " ").Trim(' ', ',', '.', ';', ':', '-');
+            if (name.Length is < 2 or > 160
+                || WordsPattern.Matches(name).Count > 10
+                || ContainsLongTenderPhrase(name, tenderSummary))
+            {
+                return null;
+            }
+
+            return AddLegalForm(name);
+        }
+
+        private static string CreateUniqueCompanyName(IReadOnlySet<string> usedNames)
+        {
+            while (true)
+            {
+                var candidate = $"{Pick(CompanyBrands)} {Pick(CompanyDescriptors)} {Pick(CompanySectors)} LLC";
+                var key = NormalizeCompanyName(candidate);
+                if (!usedNames.Contains(key)) return candidate;
+            }
+        }
+
+        private static bool ArePaymentDescriptionsVaried(IReadOnlyList<string?> descriptions)
         {
             var wordSets = descriptions
-                .Select(description => WordsPattern.Matches(description)
+                .Select(description => WordsPattern.Matches(description ?? "")
                     .Select(match => match.Value.ToLowerInvariant())
                     .ToHashSet(StringComparer.Ordinal))
                 .ToArray();
-
             for (var first = 0; first < wordSets.Length; first++)
             {
                 for (var second = first + 1; second < wordSets.Length; second++)
@@ -347,6 +391,7 @@ namespace TenderAI.Api.Services
         private static string NormalizeCompanyName(string name)
         {
             var withoutId = CustomerIdPattern.Replace(name, " ");
+            withoutId = CustomerReferencePattern.Replace(withoutId, " ");
             var withoutLegalForm = LegalFormPattern.Replace(withoutId, " ");
             return string.Join(' ', WordsPattern.Matches(withoutLegalForm)
                 .Select(match => match.Value.ToLowerInvariant()));
@@ -372,8 +417,9 @@ namespace TenderAI.Api.Services
             return null;
         }
 
-        private static IndustryDefinition ResolveIndustry(string activity) =>
-            FindIndustry(activity) ?? GenericIndustry;
+        private static IEnumerable<IndustryDefinition> AllIndustries() =>
+            Industries.Select(industry => new IndustryDefinition(industry.Code, industry.Description))
+                .Append(GenericIndustry);
 
         private static string NextTaxCode(HashSet<string> used)
         {
@@ -422,8 +468,7 @@ namespace TenderAI.Api.Services
             return differentSummaries.Count > 0 ? Pick(differentSummaries) : first;
         }
 
-        private static CustomerProfileGenerationException InvalidProfile(string reason) =>
-            new($"Amazon Bedrock returned an invalid customer profile: {reason} No customers were saved.");
+        private static string Pick(string[] values) => values[Random.Shared.Next(values.Length)];
 
         private sealed record CustomerIdentity(string CustomerId, string TaxCode);
         private sealed record IndustryDefinition(string Code, string Description);
@@ -439,16 +484,13 @@ namespace TenderAI.Api.Services
             GenerationPlan Plan,
             string CompanyName,
             IndustryDefinition Industry,
-            IReadOnlyList<string> PaymentDescriptions,
-            string NormalizedName = "");
+            IReadOnlyList<string> PaymentDescriptions);
         private sealed record TenderSource(string Summary, decimal StartPrice, string? RegionName, string? DeliveryRegion, string? DeliveryDistrict);
     }
 
     public sealed class NoAvailableTenderSummaryException()
         : Exception("Load at least one tender with an English summary before generating customers.");
 
-    public sealed class CustomerProfileGenerationException(
-        string message,
-        Exception? innerException = null)
+    public sealed class CustomerProfileGenerationException(string message, Exception? innerException = null)
         : Exception(message, innerException);
 }

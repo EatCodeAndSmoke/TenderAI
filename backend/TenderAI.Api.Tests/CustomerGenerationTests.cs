@@ -45,7 +45,7 @@ public class CustomerGenerationTests
 
             var controller = new CustomersController(db);
             var response = await controller.Generate(
-                new CustomerGenerationService(db, new FakeProfileGenerator()),
+                new CustomerGenerationService(db, new FakeProfileGenerator(nonMatchingWithPayments: true)),
                 CancellationToken.None);
             var ok = Assert.IsType<OkObjectResult>(response.Result);
             var returned = Assert.IsAssignableFrom<IEnumerable<CustomerRecordDto>>(ok.Value).ToList();
@@ -153,7 +153,7 @@ public class CustomerGenerationTests
     }
 
     [Fact]
-    public async Task GenerateStopsAfterBoundedRetriesWhenCompanyNamesCannotBeUnique()
+    public async Task GenerateFallsBackToUniqueNamesAfterBoundedRetries()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
@@ -182,12 +182,14 @@ public class CustomerGenerationTests
         var response = await new CustomersController(db)
             .Generate(new CustomerGenerationService(db, generator), CancellationToken.None);
 
-        var problem = Assert.IsType<ObjectResult>(response.Result);
-        Assert.Equal(StatusCodes.Status502BadGateway, problem.StatusCode);
-        Assert.Contains("unique profile after 3 attempts", Assert.IsType<ProblemDetails>(problem.Value).Title);
-        Assert.Equal(5, generator.CallCount);
-        Assert.Equal(1, await db.Customers.CountAsync());
-        Assert.Equal(0, await db.CustomerPayments.CountAsync());
+        var ok = Assert.IsType<OkObjectResult>(response.Result);
+        var generated = Assert.IsAssignableFrom<IEnumerable<CustomerRecordDto>>(ok.Value).ToList();
+        Assert.Equal(3, generated.Count);
+        Assert.True(generator.CallCount >= 5);
+        Assert.Equal(4, await db.Customers.CountAsync());
+        Assert.Equal(6, await db.CustomerPayments.CountAsync());
+        var names = await db.Customers.Select(customer => customer.Name).ToListAsync();
+        Assert.Equal(names.Count, names.Select(NormalizeCompanyName).Distinct(StringComparer.OrdinalIgnoreCase).Count());
     }
 
     [Fact]
@@ -244,7 +246,7 @@ public class CustomerGenerationTests
     }
 
     [Fact]
-    public async Task GenerateRejectsCustomerIdsInGeneratedNamesWithoutPersisting()
+    public async Task GenerateNormalizesCustomerIdsOutOfGeneratedNames()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
@@ -262,14 +264,15 @@ public class CustomerGenerationTests
             new CustomerGenerationService(db, new FakeProfileGenerator(invalidCompanyName: "Navqiron Supplies C 99")),
             CancellationToken.None);
 
-        var problem = Assert.IsType<ObjectResult>(response.Result);
-        Assert.Equal(StatusCodes.Status502BadGateway, problem.StatusCode);
-        Assert.Equal(0, await db.Customers.CountAsync());
-        Assert.Equal(0, await db.CustomerPayments.CountAsync());
+        var ok = Assert.IsType<OkObjectResult>(response.Result);
+        var generated = Assert.IsAssignableFrom<IEnumerable<CustomerRecordDto>>(ok.Value).ToList();
+        Assert.Equal(3, generated.Count);
+        Assert.All(generated, customer => Assert.DoesNotContain("C 99", customer.Customer!.Name));
+        Assert.Equal(3, await db.Customers.CountAsync());
     }
 
     [Fact]
-    public async Task GenerateRejectsIndustryCopiedFromTenderWithoutPersisting()
+    public async Task GenerateCanonicalizesActivityCopiedFromTenderInsteadOfFailing()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
@@ -287,14 +290,20 @@ public class CustomerGenerationTests
             new CustomerGenerationService(db, new FakeProfileGenerator(invalidIndustryName: "Buyer wants to purchase special bread")),
             CancellationToken.None);
 
-        var problem = Assert.IsType<ObjectResult>(response.Result);
-        Assert.Equal(StatusCodes.Status502BadGateway, problem.StatusCode);
-        Assert.Equal(0, await db.Customers.CountAsync());
-        Assert.Equal(0, await db.CustomerPayments.CountAsync());
+        var ok = Assert.IsType<OkObjectResult>(response.Result);
+        var generated = Assert.IsAssignableFrom<IEnumerable<CustomerRecordDto>>(ok.Value).ToList();
+        Assert.Equal(3, generated.Count);
+        Assert.All(generated.Where(customer => !customer.OnRegister), customer =>
+        {
+            var profile = customer.Customer!;
+            var industry = profile.Industry!;
+            Assert.Equal("10710", industry.IndustryCode);
+            Assert.Equal("Manufacture of bread", industry.Name);
+        });
     }
 
     [Fact]
-    public async Task GenerateRejectsPaymentDescriptionCopiedFromTenderWithoutPersisting()
+    public async Task GenerateReplacesPaymentTextCopiedFromTenderInsteadOfFailing()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
@@ -312,14 +321,18 @@ public class CustomerGenerationTests
             new CustomerGenerationService(db, new FakeProfileGenerator(invalidPaymentDescription: "The buyer wants to purchase special bread for schools")),
             CancellationToken.None);
 
-        var problem = Assert.IsType<ObjectResult>(response.Result);
-        Assert.Equal(StatusCodes.Status502BadGateway, problem.StatusCode);
-        Assert.Equal(0, await db.Customers.CountAsync());
-        Assert.Equal(0, await db.CustomerPayments.CountAsync());
+        var ok = Assert.IsType<OkObjectResult>(response.Result);
+        var generated = Assert.IsAssignableFrom<IEnumerable<CustomerRecordDto>>(ok.Value).ToList();
+        Assert.Equal(3, generated.Count);
+        Assert.All(generated.Where(customer => !customer.OnRegister).SelectMany(customer => customer.RecentPayments), payment =>
+        {
+            Assert.DoesNotContain("The buyer wants", payment.PurposeDescription, StringComparison.OrdinalIgnoreCase);
+            Assert.InRange(payment.PurposeDescription.Length, 8, 120);
+        });
     }
 
     [Fact]
-    public async Task GenerateRejectsRepetitivePaymentTemplatesWithoutPersisting()
+    public async Task GenerateReplacesRepetitivePaymentTemplatesInsteadOfFailing()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
@@ -336,10 +349,11 @@ public class CustomerGenerationTests
             new CustomerGenerationService(db, new FakeProfileGenerator(repetitivePayments: true)),
             CancellationToken.None);
 
-        var problem = Assert.IsType<ObjectResult>(response.Result);
-        Assert.Equal(StatusCodes.Status502BadGateway, problem.StatusCode);
-        Assert.Equal(0, await db.Customers.CountAsync());
-        Assert.Equal(0, await db.CustomerPayments.CountAsync());
+        var ok = Assert.IsType<OkObjectResult>(response.Result);
+        var generated = Assert.IsAssignableFrom<IEnumerable<CustomerRecordDto>>(ok.Value).ToList();
+        Assert.Equal(3, generated.Count);
+        Assert.All(generated.Where(customer => !customer.OnRegister), customer =>
+            Assert.Equal(3, customer.RecentPayments.Select(payment => payment.PurposeDescription).Distinct(StringComparer.OrdinalIgnoreCase).Count()));
     }
 
     [Fact]
@@ -449,7 +463,8 @@ public class CustomerGenerationTests
         bool repetitivePayments = false,
         bool duplicateNames = false,
         bool variedBreadActivityLabels = false,
-        bool alwaysDuplicateNames = false) : ICustomerProfileGenerator
+        bool alwaysDuplicateNames = false,
+        bool nonMatchingWithPayments = false) : ICustomerProfileGenerator
     {
         private int callCount;
         public int CallCount => callCount;
@@ -464,7 +479,7 @@ public class CustomerGenerationTests
             CancellationToken ct)
         {
             var breadTender = tenderSummary.Contains("bread", StringComparison.OrdinalIgnoreCase);
-            var payments = shouldMatchTender
+            var payments = shouldMatchTender || nonMatchingWithPayments
                 ? breadTender
                     ? languageCode == "ru"
                         ? new List<string>
