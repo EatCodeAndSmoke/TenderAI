@@ -106,7 +106,7 @@ export default function CustomersPage({ onToast }) {
               type="button"
               onClick={handleClear}
               disabled={status !== 'ready' || n === 0 || clearing}
-              className={`${BTN_SECONDARY} disabled:cursor-not-allowed disabled:opacity-50`}
+              className={`${BTN_SECONDARY} cursor-pointer disabled:cursor-not-allowed disabled:opacity-50`}
             >
               <XIcon /> Clear
             </button>

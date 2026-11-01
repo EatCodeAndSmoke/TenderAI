@@ -1,0 +1,33 @@
+name: Deploy TenderAI
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy API
+        run: docker compose -p tenderai up -d --build api
+
+      - name: Build admin UI
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/UI/admin:/src:ro" \
+            -v /var/www/tenderai/admin:/out \
+            node:22-alpine sh -c 'mkdir -p /tmp/app && cp -a /src/. /tmp/app/ && cd /tmp/app && npm ci && npm run build && cp -a dist/. /out/'
+
+      - name: Build banking UI
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/UI/banking:/src:ro" \
+            -v /var/www/tenderai/banking:/out \
+            node:22-alpine sh -c 'mkdir -p /tmp/app && cp -a /src/. /tmp/app/ && cd /tmp/app && npm ci && npm run build && cp -a dist/. /out/'
