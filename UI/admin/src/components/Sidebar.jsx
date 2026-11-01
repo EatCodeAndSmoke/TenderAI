@@ -2,8 +2,8 @@ import { NavLink } from 'react-router-dom';
 import { BuildingIcon, DocIcon, LinkIcon, LogoIcon } from './icons.jsx';
 
 const NAV = [
-  { to: '/customers', label: 'Customers', Icon: BuildingIcon },
   { to: '/tenders', label: 'Tenders', Icon: DocIcon },
+  { to: '/customers', label: 'Customers', Icon: BuildingIcon },
   { to: '/matches', label: 'Matches', Icon: LinkIcon }
 ];
 
@@ -41,7 +41,7 @@ export default function Sidebar() {
       </nav>
 
       <p className="mt-auto hidden px-3 text-xs leading-relaxed text-cobalt-soft md:block">
-        Mock data for the demo. Nothing you change here is saved.
+        Demo data is saved to the database.
       </p>
     </aside>
   );

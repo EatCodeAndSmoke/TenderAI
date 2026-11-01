@@ -27,6 +27,7 @@ builder.Services.AddHttpClient<UzexClient>((services, http) =>
     http.Timeout = TimeSpan.FromSeconds(uzex.TimeoutSeconds);
 });
 builder.Services.AddScoped<TenderImportService>();
+builder.Services.AddScoped<CustomerGenerationService>();
 builder.Services.AddSingleton<IAmazonBedrockRuntime>(services =>
 {
     var region = services.GetRequiredService<IOptions<BedrockOptions>>().Value.Region;

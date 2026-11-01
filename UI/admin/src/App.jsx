@@ -7,7 +7,7 @@ import MatchesPage from './pages/MatchesPage.jsx';
 import { matches } from './data/matches.js';
 import { useMatchingRun } from './lib/useMatchingRun.js';
 
-// Pages: #/customers, #/tenders, #/matches
+// Pages: #/tenders, #/customers, #/matches
 export default function App() {
   const [toast, showToast] = useToast();
   const [run, startMatching] = useMatchingRun(matches.length);
@@ -22,7 +22,7 @@ export default function App() {
             <Route path="/customers" element={<CustomersPage onToast={showToast} />} />
             <Route path="/tenders" element={<TendersPage onToast={showToast} />} />
             <Route path="/matches" element={<MatchesPage run={run} onStart={startMatching} />} />
-            <Route path="*" element={<Navigate to="/customers" replace />} />
+            <Route path="*" element={<Navigate to="/tenders" replace />} />
           </Routes>
         </div>
       </main>
