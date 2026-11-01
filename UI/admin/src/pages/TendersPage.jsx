@@ -14,9 +14,6 @@ const ALIGN_RIGHT = [3, 4];
 
 const amount = (n) => money(Math.round(n));
 
-// Nearest deadline first, the same order as the API
-const byDeadline = (a, b) => a.endDate.localeCompare(b.endDate) || a.id - b.id;
-
 function Deadline({ iso, text }) {
   const d = daysUntil(iso.slice(0, 10));
   const when = d < 0 ? text.closed : d === 0 ? text.today : text.inDays(d);
@@ -54,9 +51,11 @@ export default function TendersPage({ lang, onLangChange, onToast }) {
     try {
       setTenders(await getTenders());
       setStatus('ready');
+      return true;
     } catch (err) {
       setLoadError(err.message);
       setStatus('error');
+      return false;
     }
   }, []);
 
@@ -66,15 +65,12 @@ export default function TendersPage({ lang, onLangChange, onToast }) {
     setBusy('load');
     try {
       const loaded = await loadTenders(LOAD_COUNT);
+      if (!(await fetchTenders())) return;
       if (loaded.length === 0) {
-        onToast('No new tenders on UZEX. Every open lot is already loaded.');
+        onToast('No new tenders on UZEX. Existing tenders were checked for missing English translations.');
         return;
       }
-      setTenders((prev) => {
-        const ids = new Set(loaded.map((t) => t.id));
-        return [...prev.filter((t) => !ids.has(t.id)), ...loaded].sort(byDeadline);
-      });
-      onToast(`Loaded ${loaded.length} new ${loaded.length === 1 ? 'tender' : 'tenders'} from UZEX.`);
+      onToast(`Loaded ${loaded.length} new ${loaded.length === 1 ? 'tender' : 'tenders'} from UZEX. Existing tenders were checked for missing English translations.`);
     } catch (err) {
       window.alert(err.message);
     } finally {
@@ -189,6 +185,15 @@ export default function TendersPage({ lang, onLangChange, onToast }) {
                     <td className="min-w-72 px-3.5 py-4">
                       <div className="line-clamp-3 font-medium" title={tx('name')}>{tx('name')}</div>
                       <div className="mt-0.5 text-xs text-muted">{tx('buyerName')}</div>
+                      {lang === 'en' && t.translationError && (
+                        <div
+                          className="mt-1 line-clamp-2 text-xs text-red-700"
+                          title={t.translationError}
+                          role="status"
+                        >
+                          English translation failed: {t.translationError}
+                        </div>
+                      )}
                     </td>
                     <td className="px-3.5 py-4">
                       {tx('regionName') ? <Chip>{tx('regionName')}</Chip> : <span className="text-muted">—</span>}

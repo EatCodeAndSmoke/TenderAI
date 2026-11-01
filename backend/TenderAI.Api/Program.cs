@@ -25,6 +25,8 @@ builder.Services.AddHttpClient<UzexClient>((services, http) =>
     http.Timeout = TimeSpan.FromSeconds(uzex.TimeoutSeconds);
 });
 builder.Services.AddScoped<TenderImportService>();
+builder.Services.AddSingleton<ITextTranslator, AmazonTranslateTextTranslator>();
+builder.Services.AddSingleton<TenderTranslationService>();
 
 var app = builder.Build();
 
@@ -37,10 +39,9 @@ using (var scope = app.Services.CreateScope())
     {
         SeedData.Seed(db);
     }
-    else
-    {
-        DatabaseSchema.AddMissingTables(db);
-    }
+
+    DatabaseSchema.AddMissingTables(db);
+    DatabaseSchema.AddMissingColumns(db);
 }
 
 // Configure the HTTP request pipeline.

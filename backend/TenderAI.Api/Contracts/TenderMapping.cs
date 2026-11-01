@@ -51,7 +51,8 @@ namespace TenderAI.Api.Contracts
                 tr.DeliveryDistrict,
                 tr.DeliveryAddress,
                 tr.Description,
-                tr.Requirements)));
+                tr.Requirements)),
+            t.TranslationError);
 
         private static TenderProductDto ToDto(TenderProductEntity p) => new(
             p.Id,

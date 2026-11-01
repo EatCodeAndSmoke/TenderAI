@@ -35,7 +35,8 @@ namespace TenderAI.Api.Contracts
         IReadOnlyList<string> BidLanguages,
         DateTime LoadedAt,
         IReadOnlyList<TenderProductDto> Products,
-        IReadOnlyDictionary<string, TenderTextDto> Translations);
+        IReadOnlyDictionary<string, TenderTextDto> Translations,
+        string? TranslationError);
 
     public record TenderTextDto(
         string? Name,

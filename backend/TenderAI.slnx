@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="TenderAI.Api/TenderAI.Api.csproj" />
+  <Project Path="TenderAI.Api.Tests/TenderAI.Api.Tests.csproj" />
 </Solution>

@@ -10,6 +10,7 @@ namespace TenderAI.Api.Services
     public class TenderImportService(
         TenderAiDbContext db,
         UzexClient uzex,
+        TenderTranslationService translator,
         IOptions<UzexOptions> options,
         ILogger<TenderImportService> logger)
     {
@@ -27,6 +28,14 @@ namespace TenderAI.Api.Services
             await LoadLock.WaitAsync(ct);
             try
             {
+                var translatedExisting = await translator.TranslateMissingTendersAsync(db, ct);
+                if (translatedExisting > 0)
+                {
+                    logger.LogInformation(
+                        "Backfilled English translations for {Count} existing tenders",
+                        translatedExisting);
+                }
+
                 var known = (await db.Tenders.Select(t => t.Id).ToListAsync(ct)).ToHashSet();
                 var loaded = new List<TenderEntity>();
                 var loadedAt = DateTime.UtcNow;
@@ -48,7 +57,9 @@ namespace TenderAI.Api.Services
                         }
 
                         var tenders = await ReadDetailsAsync(batch, loadedAt, ct);
-                        loaded.AddRange(tenders.OfType<TenderEntity>());
+                        var successfulDetails = tenders.OfType<TenderEntity>().ToList();
+                        await translator.TranslateTendersAsync(successfulDetails, ct);
+                        loaded.AddRange(successfulDetails);
                     }
                 }
 

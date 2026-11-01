@@ -62,6 +62,8 @@
         // UTC
         public DateTime LoadedAt { get; set; }
 
+        public string? TranslationError { get; set; }
+
         public List<TenderProductEntity> Products { get; set; } = [];
         public List<TenderTranslationEntity> Translations { get; set; } = [];
     }
