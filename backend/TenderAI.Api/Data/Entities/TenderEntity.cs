@@ -1,7 +1,7 @@
 ﻿namespace TenderAI.Api.Data.Entities
 {
-    // A tender lot loaded from the UZEX e-tender platform. Text fields hold the original text as UZEX
-    // publishes it (Uzbek, sometimes with Russian). English and other languages go to TenderTranslations.
+    // A tender lot loaded from UZEX. Source text stays intact; Summary is the generated plain-English
+    // explanation shown in the admin app.
     public class TenderEntity
     {
         // The UZEX lot ID, e.g. 511680. Also used to skip lots that are already loaded.
@@ -62,9 +62,9 @@
         // UTC
         public DateTime LoadedAt { get; set; }
 
-        public string? TranslationError { get; set; }
+        public string? Summary { get; set; }
+        public string? SummaryError { get; set; }
 
         public List<TenderProductEntity> Products { get; set; } = [];
-        public List<TenderTranslationEntity> Translations { get; set; } = [];
     }
 }

@@ -16,6 +16,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Deploy API
+        env:
+          BEDROCK_REGION: ${{ vars.BEDROCK_REGION || 'eu-central-1' }}
+          BEDROCK_MODEL_ID: ${{ vars.BEDROCK_MODEL_ID || 'eu.amazon.nova-micro-v1:0' }}
         run: docker compose -p tenderai up -d --build api
 
       - name: Build admin UI

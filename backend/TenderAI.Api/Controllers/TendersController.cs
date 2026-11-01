@@ -12,15 +12,15 @@ namespace TenderAI.Api.Controllers
     [ApiController]
     public class TendersController(TenderAiDbContext db) : ControllerBase
     {
-        private const int DefaultLoadCount = 10;
-        private const int MaxLoadCount = 50;
+        private const int DefaultLoadCount = TenderImportService.MaxTendersPerLoad;
 
         // GET api/tenders
         // Nearest deadline first
         [HttpGet]
         public async Task<ActionResult<IEnumerable<TenderDto>>> GetAll(CancellationToken ct)
         {
-            var tenders = await WithDetails(db.Tenders)
+            var tenders = await db.Tenders
+                .AsNoTracking()
                 .OrderBy(t => t.EndDate)
                 .ThenBy(t => t.Id)
                 .ToListAsync(ct);
@@ -32,11 +32,11 @@ namespace TenderAI.Api.Controllers
         [HttpGet("{id:long}")]
         public async Task<ActionResult<TenderDto>> Get(long id, CancellationToken ct)
         {
-            var tender = await WithDetails(db.Tenders).FirstOrDefaultAsync(t => t.Id == id, ct);
+            var tender = await db.Tenders.AsNoTracking().FirstOrDefaultAsync(t => t.Id == id, ct);
             return tender is null ? NotFound() : tender.ToDto();
         }
 
-        // POST api/tenders/load?count=10
+        // POST api/tenders/load?count=5
         // Loads lots from UZEX that aren't in the database yet and returns them. An empty list means
         // every open lot on UZEX is already loaded.
         [HttpPost("load")]
@@ -45,7 +45,7 @@ namespace TenderAI.Api.Controllers
             [FromQuery] int count = DefaultLoadCount,
             CancellationToken ct = default)
         {
-            count = Math.Clamp(count, 1, MaxLoadCount);
+            count = Math.Clamp(count, 1, TenderImportService.MaxTendersPerLoad);
 
             List<TenderEntity> loaded;
             try
@@ -69,25 +69,17 @@ namespace TenderAI.Api.Controllers
         }
 
         // DELETE api/tenders
-        // Removes every tender together with its products and translations
+        // Removes every tender and its products. Existing legacy translation tables are left intact
+        // by schema updates and cascade-delete with their original foreign keys.
         [HttpDelete]
         public async Task<IActionResult> Clear(CancellationToken ct)
         {
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
-            await db.TenderProductTranslations.ExecuteDeleteAsync(ct);
             await db.TenderProducts.ExecuteDeleteAsync(ct);
-            await db.TenderTranslations.ExecuteDeleteAsync(ct);
             await db.Tenders.ExecuteDeleteAsync(ct);
             await transaction.CommitAsync(ct);
 
             return NoContent();
         }
-
-        private static IQueryable<TenderEntity> WithDetails(IQueryable<TenderEntity> tenders) => tenders
-            .AsNoTracking()
-            .Include(t => t.Translations)
-            .Include(t => t.Products)
-                .ThenInclude(p => p.Translations)
-            .AsSplitQuery();
     }
 }

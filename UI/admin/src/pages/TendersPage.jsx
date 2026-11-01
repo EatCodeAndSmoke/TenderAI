@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import { TENDER_LANGS, TENDER_TEXT, tenderText } from '../data/tenders.js';
+import { TENDER_TEXT } from '../data/tenders.js';
 import { clearTenders, getTenders, loadTenders } from '../lib/api.js';
 import { daysUntil, formatDate, money, shortMoney } from '../lib/format.js';
 import { BTN_PRIMARY, BTN_ROW, BTN_SECONDARY, CARD, ROW } from '../lib/styles.js';
-import { Chip } from '../components/badges.jsx';
 import { ExternalIcon, RefreshIcon, SpinnerIcon, XIcon } from '../components/icons.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import Modal from '../components/Modal.jsx';
 import TenderDetails from '../components/TenderDetails.jsx';
 
-const LOAD_COUNT = 10;
-const ALIGN_RIGHT = [3, 4];
+const LOAD_COUNT = 5;
+const ALIGN_RIGHT = [2, 3];
 
 const amount = (n) => money(Math.round(n));
 
@@ -38,8 +37,8 @@ function summarize(tenders) {
   return `${n} ${n === 1 ? 'lot' : 'lots'} from UZEX worth ${worth} in total. The nearest deadline is ${formatDate(nearest)}.`;
 }
 
-export default function TendersPage({ lang, onLangChange, onToast }) {
-  const text = TENDER_TEXT[lang];
+export default function TendersPage({ onToast }) {
+  const text = TENDER_TEXT;
   const [tenders, setTenders] = useState([]);
   const [status, setStatus] = useState('loading');
   const [loadError, setLoadError] = useState('');
@@ -67,10 +66,10 @@ export default function TendersPage({ lang, onLangChange, onToast }) {
       const loaded = await loadTenders(LOAD_COUNT);
       if (!(await fetchTenders())) return;
       if (loaded.length === 0) {
-        onToast('No new tenders on UZEX. Existing tenders were checked for missing English translations.');
+        onToast('No new tenders on UZEX. Existing tenders were checked for missing English summaries.');
         return;
       }
-      onToast(`Loaded ${loaded.length} new ${loaded.length === 1 ? 'tender' : 'tenders'} from UZEX. Existing tenders were checked for missing English translations.`);
+      onToast(`Loaded ${loaded.length} new ${loaded.length === 1 ? 'tender' : 'tenders'} from UZEX. Existing tenders were checked for missing English summaries.`);
     } catch (err) {
       window.alert(err.message);
     } finally {
@@ -79,7 +78,7 @@ export default function TendersPage({ lang, onLangChange, onToast }) {
   };
 
   const handleClear = async () => {
-    if (!window.confirm("Remove all tenders? Their products and translations are removed too. This can't be undone.")) return;
+    if (!window.confirm("Remove all tenders? This can't be undone.")) return;
     setBusy('clear');
     try {
       await clearTenders();
@@ -96,9 +95,6 @@ export default function TendersPage({ lang, onLangChange, onToast }) {
   const summary = status === 'loading'
     ? 'Loading tenders…'
     : n === 0 ? 'No tenders yet.' : summarize(tenders);
-
-  // Translations are filled in later; until then every language shows the original UZEX text
-  const untranslated = lang !== 'uz' && tenders.some((t) => !t.translations?.[lang]);
 
   return (
     <section>
@@ -128,26 +124,6 @@ export default function TendersPage({ lang, onLangChange, onToast }) {
       />
 
       <div className={CARD}>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
-          <p className="text-sm text-muted">
-            Show tenders in
-            {untranslated && <span className="block text-xs">No English translation yet, so tenders show the original text from UZEX.</span>}
-          </p>
-          <div role="group" aria-label="Tender language" className="inline-flex rounded-lg bg-subtle p-1 text-xs font-medium">
-            {TENDER_LANGS.map(([code, label]) => (
-              <button
-                key={code}
-                type="button"
-                aria-pressed={code === lang}
-                onClick={() => onLangChange(code)}
-                className="rounded-md px-3 py-1.5 text-muted transition-colors hover:text-ink aria-pressed:bg-surface aria-pressed:text-ink aria-pressed:shadow-sm"
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="bg-subtle text-left text-xs text-muted">
@@ -173,31 +149,27 @@ export default function TendersPage({ lang, onLangChange, onToast }) {
               {status === 'ready' && n === 0 && (
                 <tr>
                   <td colSpan={text.headers.length} className="px-4 py-10 text-center text-sm text-muted">
-                    No tenders yet. Click Load tenders to get the next {LOAD_COUNT} open lots from UZEX.
+                    No tenders yet. Click Load tenders to get up to {LOAD_COUNT} open lots from UZEX.
                   </td>
                 </tr>
               )}
               {status === 'ready' && tenders.map((t) => {
-                const tx = (field) => tenderText(t, lang, field);
                 return (
                   <tr key={t.id} className={ROW}>
                     <td className="px-3.5 py-4 text-xs whitespace-nowrap text-muted">{t.displayNo}</td>
                     <td className="min-w-72 px-3.5 py-4">
-                      <div className="line-clamp-3 font-medium" title={tx('name')}>{tx('name')}</div>
-                      <div className="mt-0.5 text-xs text-muted">{tx('buyerName')}</div>
-                      {lang === 'en' && t.translationError && (
+                      <div className="line-clamp-3 font-medium" title={t.summary || undefined}>
+                        {t.summary || 'English summary is not available.'}
+                      </div>
+                      {t.summaryError && (
                         <div
                           className="mt-1 line-clamp-2 text-xs text-red-700"
-                          title={t.translationError}
+                          title={t.summaryError}
                           role="status"
                         >
-                          English translation failed: {t.translationError}
+                          Summary unavailable: {t.summaryError}
                         </div>
                       )}
-                    </td>
-                    <td className="px-3.5 py-4">
-                      {tx('regionName') ? <Chip>{tx('regionName')}</Chip> : <span className="text-muted">—</span>}
-                      {tx('districtName') && <div className="mt-1 text-xs text-muted">{tx('districtName')}</div>}
                     </td>
                     <td className="px-3.5 py-4 text-right whitespace-nowrap tabular-nums">
                       <div className="font-medium">{amount(t.startPrice)}</div>
@@ -249,7 +221,7 @@ export default function TendersPage({ lang, onLangChange, onToast }) {
       </div>
 
       <Modal open={selected !== null} onClose={() => setSelected(null)} labelledBy="tender-title" width="max-w-4xl">
-        {selected && <TenderDetails tender={selected} lang={lang} onClose={() => setSelected(null)} />}
+        {selected && <TenderDetails tender={selected} onClose={() => setSelected(null)} />}
       </Modal>
     </section>
   );

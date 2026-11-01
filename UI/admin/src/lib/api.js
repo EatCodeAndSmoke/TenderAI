@@ -59,7 +59,7 @@ export const clearCustomers = () => request('/customers', { method: 'DELETE' });
 export const getTenders = () => request('/tenders');
 
 // Loads up to count lots that aren't in the database yet and returns only those (empty when none are new)
-export const loadTenders = (count = 10) => request(`/tenders/load?count=${count}`, { method: 'POST' });
+export const loadTenders = (count = 5) => request(`/tenders/load?count=${count}`, { method: 'POST' });
 
-// Removes every tender, with its products and translations
+// Removes every tender, with its products
 export const clearTenders = () => request('/tenders', { method: 'DELETE' });

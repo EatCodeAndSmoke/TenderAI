@@ -29,7 +29,7 @@ namespace TenderAI.Api.Data
         }
 
         // SQLite's EnsureCreated doesn't add columns to an existing database. Add new nullable
-        // columns explicitly so deployments keep their existing tender data.
+        // columns explicitly so deployments keep their existing tender data and legacy translation rows.
         public static void AddMissingColumns(TenderAiDbContext db)
         {
             var connection = db.Database.GetDbConnection();
@@ -52,10 +52,16 @@ namespace TenderAI.Api.Data
                     }
                 }
 
-                if (!columns.Contains("TranslationError"))
+                if (!columns.Contains("Summary"))
                 {
                     db.Database.ExecuteSqlRaw(
-                        "ALTER TABLE \"Tenders\" ADD COLUMN \"TranslationError\" TEXT NULL");
+                        "ALTER TABLE \"Tenders\" ADD COLUMN \"Summary\" TEXT NULL");
+                }
+
+                if (!columns.Contains("SummaryError"))
+                {
+                    db.Database.ExecuteSqlRaw(
+                        "ALTER TABLE \"Tenders\" ADD COLUMN \"SummaryError\" TEXT NULL");
                 }
             }
             finally

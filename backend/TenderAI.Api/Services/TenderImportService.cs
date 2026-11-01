@@ -10,12 +10,13 @@ namespace TenderAI.Api.Services
     public class TenderImportService(
         TenderAiDbContext db,
         UzexClient uzex,
-        TenderTranslationService translator,
+        TenderSummaryService summarizer,
         IOptions<UzexOptions> options,
         ILogger<TenderImportService> logger)
     {
         private const int ListPageSize = 50;
         private const int MaxParallelDetails = 4;
+        public const int MaxTendersPerLoad = 5;
 
         // One load at a time, so two clicks can't save the same lot twice
         private static readonly SemaphoreSlim LoadLock = new(1, 1);
@@ -25,15 +26,16 @@ namespace TenderAI.Api.Services
         // A lot whose details can't be read is skipped, and the next new one is taken instead.
         public async Task<List<TenderEntity>> LoadNewAsync(int count, CancellationToken ct)
         {
+            count = Math.Clamp(count, 1, MaxTendersPerLoad);
             await LoadLock.WaitAsync(ct);
             try
             {
-                var translatedExisting = await translator.TranslateMissingTendersAsync(db, ct);
-                if (translatedExisting > 0)
+                var summarizedExisting = await summarizer.SummarizeMissingTendersAsync(db, ct);
+                if (summarizedExisting > 0)
                 {
                     logger.LogInformation(
-                        "Backfilled English translations for {Count} existing tenders",
-                        translatedExisting);
+                        "Backfilled English summaries for {Count} existing tenders",
+                        summarizedExisting);
                 }
 
                 var known = (await db.Tenders.Select(t => t.Id).ToListAsync(ct)).ToHashSet();
@@ -58,7 +60,7 @@ namespace TenderAI.Api.Services
 
                         var tenders = await ReadDetailsAsync(batch, loadedAt, ct);
                         var successfulDetails = tenders.OfType<TenderEntity>().ToList();
-                        await translator.TranslateTendersAsync(successfulDetails, ct);
+                        await summarizer.SummarizeTendersAsync(successfulDetails, ct);
                         loaded.AddRange(successfulDetails);
                     }
                 }

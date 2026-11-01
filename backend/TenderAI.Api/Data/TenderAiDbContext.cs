@@ -11,8 +11,6 @@ namespace TenderAI.Api.Data
         public DbSet<NotificationEntity> Notifications => Set<NotificationEntity>();
         public DbSet<TenderEntity> Tenders => Set<TenderEntity>();
         public DbSet<TenderProductEntity> TenderProducts => Set<TenderProductEntity>();
-        public DbSet<TenderTranslationEntity> TenderTranslations => Set<TenderTranslationEntity>();
-        public DbSet<TenderProductTranslationEntity> TenderProductTranslations => Set<TenderProductTranslationEntity>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -77,16 +75,13 @@ namespace TenderAI.Api.Data
                 b.Property(t => t.Source).HasMaxLength(20);
                 b.Property(t => t.BuyerTin).HasMaxLength(20);
                 b.Property(t => t.CurrencyCode).HasMaxLength(3);
+                b.Property(t => t.SummaryError).HasMaxLength(2000);
                 b.HasIndex(t => t.EndDate);
 
-                // Deleting a tender deletes its products and translations
+                // Deleting a tender deletes its products
                 b.HasMany(t => t.Products)
                     .WithOne(p => p.Tender)
                     .HasForeignKey(p => p.TenderId)
-                    .OnDelete(DeleteBehavior.Cascade);
-                b.HasMany(t => t.Translations)
-                    .WithOne(tr => tr.Tender)
-                    .HasForeignKey(tr => tr.TenderId)
                     .OnDelete(DeleteBehavior.Cascade);
             });
 
@@ -95,24 +90,6 @@ namespace TenderAI.Api.Data
                 b.ToTable("TenderProducts");
                 b.Property(p => p.ProductCode).HasMaxLength(30);
                 b.HasIndex(p => p.ProductCode);
-                b.HasMany(p => p.Translations)
-                    .WithOne(tr => tr.Product)
-                    .HasForeignKey(tr => tr.ProductId)
-                    .OnDelete(DeleteBehavior.Cascade);
-            });
-
-            modelBuilder.Entity<TenderTranslationEntity>(b =>
-            {
-                b.ToTable("TenderTranslations");
-                b.HasKey(tr => new { tr.TenderId, tr.Lang });
-                b.Property(tr => tr.Lang).HasMaxLength(10);
-            });
-
-            modelBuilder.Entity<TenderProductTranslationEntity>(b =>
-            {
-                b.ToTable("TenderProductTranslations");
-                b.HasKey(tr => new { tr.ProductId, tr.Lang });
-                b.Property(tr => tr.Lang).HasMaxLength(10);
             });
         }
     }

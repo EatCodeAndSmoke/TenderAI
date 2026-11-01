@@ -30,6 +30,5 @@ namespace TenderAI.Api.Data.Entities
         public int? WarrantyTerm { get; set; }
         public string? WarrantyTermUnit { get; set; }
 
-        public List<TenderProductTranslationEntity> Translations { get; set; } = [];
     }
 }

@@ -1,0 +1,47 @@
+# Amazon Bedrock tender summaries
+
+The API defaults to Amazon Nova Micro's EU geographic inference profile:
+
+- Region: `eu-central-1` (Frankfurt)
+- Model ID: `eu.amazon.nova-micro-v1:0`
+
+Nova Micro has Geo inference, but not in-Region inference, in Frankfurt. The EU profile routes only within the EU geography. Its Nova Micro destination Regions are Frankfurt (`eu-central-1`), Stockholm (`eu-north-1`), Ireland (`eu-west-1`), and Paris (`eu-west-3`). The profile ID is deliberately separate from the underlying foundation-model ID: application requests use `eu.amazon.nova-micro-v1:0`, while IAM permissions must include the `amazon.nova-micro-v1:0` foundation model in each destination Region.
+
+## EC2 role permissions
+
+Attach a policy like the following to the EC2 instance-profile role used by the API container. Replace `<ACCOUNT_ID>` with the AWS account ID. It grants only non-streaming model invocation, which is the operation this API uses:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "InvokeNovaMicroEuProfile",
+      "Effect": "Allow",
+      "Action": "bedrock:InvokeModel",
+      "Resource": [
+        "arn:aws:bedrock:eu-central-1:<ACCOUNT_ID>:inference-profile/eu.amazon.nova-micro-v1:0",
+        "arn:aws:bedrock:eu-central-1::foundation-model/amazon.nova-micro-v1:0",
+        "arn:aws:bedrock:eu-north-1::foundation-model/amazon.nova-micro-v1:0",
+        "arn:aws:bedrock:eu-west-1::foundation-model/amazon.nova-micro-v1:0",
+        "arn:aws:bedrock:eu-west-3::foundation-model/amazon.nova-micro-v1:0"
+      ]
+    }
+  ]
+}
+```
+
+AWS requires permission on both the inference-profile resource and the foundation-model resource in every Region that profile can route to. If the application later uses streaming inference, add `bedrock:InvokeModelWithResponseStream` as well. This service does not create, list, or manage inference profiles, so profile-management permissions are not needed.
+
+## Configuration
+
+The default values are defined in `backend/TenderAI.Api/appsettings.json`. Docker Compose accepts optional `BEDROCK_REGION` and `BEDROCK_MODEL_ID` environment variables; the deployment workflow reads the same-named GitHub Actions repository variables. Set both variables if selecting a different source Region or inference profile. Keep AWS credentials out of configuration: the AWS SDK uses the EC2 instance role/default credential chain.
+
+The AWS Console notice requesting use-case details is for Anthropic model onboarding, not Amazon Nova. Nova Micro does not require that Anthropic-specific form or an uploaded use-case document.
+
+Bedrock model invocation is billable. Actual availability and account-level restrictions should be checked in the AWS account before deployment.
+
+## References
+
+- [Nova Micro model card and regional availability](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-micro.html)
+- [Prerequisites for inference profiles and IAM policy requirements](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-prereq.html)

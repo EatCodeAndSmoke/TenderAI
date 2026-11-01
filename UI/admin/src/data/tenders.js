@@ -56,108 +56,29 @@ export const tenders = [
 
 export const tenderById = (id) => tenders.find((t) => t.lotId === id);
 
-// A tender's text in the chosen language. UZEX publishes the original text (Uzbek, often with Russian);
-// until a translation exists, every language shows the original.
-export const tenderText = (item, lang, field) => item.translations?.[lang]?.[field] ?? item[field];
-
-export const tenderRequirements = (tender, lang) => {
-  const translated = tender.translations?.[lang]?.requirements;
-  return translated?.length ? translated : tender.requirements;
-};
-
-// Tender table text in each language
-const UZ_MONTHS = ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'];
-
-export const TENDER_LANGS = [['en', 'English'], ['uz', "O'zbekcha"]];
-
 // Dates from UZEX are Tashkent local time without an offset: "2026-10-19T10:14:20"
 const withTime = (date) => (iso) => `${date(iso.slice(0, 10))}, ${iso.slice(11, 16)}`;
 
 const enDate = (iso) => formatDate(iso);
-const uzDate = (iso) => {
-  const d = new Date(iso + 'T00:00:00');
-  return `${d.getDate()}-${UZ_MONTHS[d.getMonth()]} ${d.getFullYear()}`;
-};
 
 export const TENDER_TEXT = {
-  en: {
-    headers: ['Lot', 'Tender', 'Region', 'Start price', 'Deposit', 'Payment terms', 'Deadline', 'Source', 'Details'],
-    days: (n) => `${n} ${n === 1 ? 'day' : 'days'}`,
-    inDays: (n) => `In ${n} ${n === 1 ? 'day' : 'days'}`,
-    advance: (p) => `${p}% advance`,
-    today: 'Closes today',
-    closed: 'Closed',
-    openSource: 'Open the lot on UZEX',
-    details: 'Details',
-    date: enDate,
-    dateTime: withTime(enDate),
-    detail: {
-      lot: 'Lot',
-      buyer: 'Buyer',
-      tin: 'TIN',
-      procedure: 'Procedure',
-      startPrice: 'Start price',
-      deposit: 'Bid deposit',
-      bankGuarantee: 'Bank guarantee accepted',
-      yes: 'Yes',
-      no: 'No',
-      payment: 'Payment',
-      financing: 'Financing',
-      delivery: 'Delivery',
-      languages: 'Bid languages',
-      period: 'Bidding period',
-      products: 'What the buyer wants',
-      product: 'Product',
-      code: 'Code',
-      quantity: 'Quantity',
-      price: 'Unit price',
-      cost: 'Total',
-      deliveryTerm: 'Delivery',
-      warranty: 'Warranty',
-      requirements: 'Requirements for bidders',
-      description: 'Description',
-      close: 'Close'
-    },
-    languageNames: { ru: 'Russian', uz: 'Uzbek', 'uz-Cyrl': 'Uzbek (Cyrillic)', en: 'English' }
-  },
-  uz: {
-    headers: ['Lot', 'Tender', 'Hudud', "Boshlang'ich narx", 'Zakalat', "To'lov muddati", 'Oxirgi muddat', 'Manba', 'Tafsilotlar'],
-    days: (n) => `${n} kun`,
-    inDays: (n) => `${n} kundan keyin`,
-    advance: (p) => `${p}% avans`,
-    today: 'Bugun yopiladi',
-    closed: 'Yopilgan',
-    openSource: 'Lotni UZEX saytida ochish',
-    details: 'Tafsilotlar',
-    date: uzDate,
-    dateTime: withTime(uzDate),
-    detail: {
-      lot: 'Lot',
-      buyer: 'Buyurtmachi',
-      tin: 'STIR',
-      procedure: 'Xarid turi',
-      startPrice: "Boshlang'ich narx",
-      deposit: 'Zakalat',
-      bankGuarantee: 'Bank kafolati qabul qilinadi',
-      yes: 'Ha',
-      no: "Yo'q",
-      payment: "To'lov",
-      financing: 'Moliyalashtirish manbai',
-      delivery: 'Yetkazib berish',
-      languages: 'Taklif tillari',
-      period: 'Takliflar qabul qilish muddati',
-      products: 'Xarid qilinadigan mahsulotlar',
-      product: 'Mahsulot',
-      code: 'Kod',
-      quantity: 'Miqdori',
-      price: 'Birlik narxi',
-      cost: 'Jami',
-      deliveryTerm: 'Yetkazib berish',
-      warranty: 'Kafolat',
-      requirements: 'Ishtirokchilarga talablar',
-      description: 'Tavsif',
-      close: 'Yopish'
-    },
-    languageNames: { ru: 'Rus', uz: "O'zbek", 'uz-Cyrl': "O'zbek (kirill)", en: 'Ingliz' }
+  headers: ['Lot', 'Tender', 'Start price', 'Deposit', 'Payment terms', 'Deadline', 'Source', 'Details'],
+  days: (n) => `${n} ${n === 1 ? 'day' : 'days'}`,
+  inDays: (n) => `In ${n} ${n === 1 ? 'day' : 'days'}`,
+  advance: (p) => `${p}% advance`,
+  today: 'Closes today',
+  closed: 'Closed',
+  openSource: 'Open the lot on UZEX',
+  details: 'Details',
+  date: enDate,
+  dateTime: withTime(enDate),
+  detail: {
+    lot: 'Lot',
+    startPrice: 'Start price',
+    deposit: 'Bid deposit',
+    payment: 'Payment terms',
+    summary: 'Plain-English summary',
+    deadline: 'Bid deadline',
+    close: 'Close'
   }
 };

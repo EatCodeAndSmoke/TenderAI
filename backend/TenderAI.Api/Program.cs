@@ -1,6 +1,7 @@
+using Amazon;
+using Amazon.BedrockRuntime;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using System.Collections.Immutable;
 using TenderAI.Api.Data;
 using TenderAI.Api.Services;
 using TenderAI.Api.Services.Uzex;
@@ -16,8 +17,9 @@ builder.Services.AddOpenApi();
 builder.Services.AddDbContext<TenderAiDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("TenderAi")));
 
-// Tenders come from the UZEX e-tender platform
+// Tenders come from UZEX; Bedrock creates a short, plain-English description from the original text.
 builder.Services.Configure<UzexOptions>(builder.Configuration.GetSection(UzexOptions.Section));
+builder.Services.Configure<BedrockOptions>(builder.Configuration.GetSection(BedrockOptions.Section));
 builder.Services.AddHttpClient<UzexClient>((services, http) =>
 {
     var uzex = services.GetRequiredService<IOptions<UzexOptions>>().Value;
@@ -25,8 +27,23 @@ builder.Services.AddHttpClient<UzexClient>((services, http) =>
     http.Timeout = TimeSpan.FromSeconds(uzex.TimeoutSeconds);
 });
 builder.Services.AddScoped<TenderImportService>();
-builder.Services.AddSingleton<ITextTranslator, AmazonTranslateTextTranslator>();
-builder.Services.AddSingleton<TenderTranslationService>();
+builder.Services.AddSingleton<IAmazonBedrockRuntime>(services =>
+{
+    var region = services.GetRequiredService<IOptions<BedrockOptions>>().Value.Region;
+    region = string.IsNullOrWhiteSpace(region)
+        ? Environment.GetEnvironmentVariable("AWS_REGION")
+            ?? Environment.GetEnvironmentVariable("AWS_DEFAULT_REGION")
+        : region;
+
+    return string.IsNullOrWhiteSpace(region)
+        ? new AmazonBedrockRuntimeClient()
+        : new AmazonBedrockRuntimeClient(new AmazonBedrockRuntimeConfig
+        {
+            RegionEndpoint = RegionEndpoint.GetBySystemName(region)
+        });
+});
+builder.Services.AddSingleton<ITenderSummarizer, BedrockTenderSummarizer>();
+builder.Services.AddSingleton<TenderSummaryService>();
 
 var app = builder.Build();
 
