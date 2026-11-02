@@ -1,6 +1,6 @@
 namespace TenderAI.Api.Data.Entities
 {
-    // A tender notification for a customer, as the notification writer agent publishes it.
+    // A tender match notification shown in the Business Bank app.
     public class NotificationEntity
     {
         // N-101, N-102, ...
@@ -31,6 +31,9 @@ namespace TenderAI.Api.Data.Entities
 
         public required string MatchReason { get; set; }
         public required string LoanDecisionReason { get; set; }
+
+        // Kept populated for existing SQLite databases where this legacy NOT NULL column remains.
+        public string WhyText { get; set; } = "";
 
         // Only present when the loan advisor made an offer
         public LoanOfferEntity? Offer { get; set; }

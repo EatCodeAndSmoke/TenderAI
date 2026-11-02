@@ -242,6 +242,7 @@ namespace TenderAI.Api.Services
                 Requirements = GetRequirements(tender),
                 MatchReason = matchReason,
                 LoanDecisionReason = loanReason,
+                WhyText = matchReason,
                 Offer = offer
             };
         }

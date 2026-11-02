@@ -25,6 +25,8 @@ public class MatchingServiceTests
             .Options;
         await using var db = new TenderAiDbContext(options);
         await db.Database.EnsureCreatedAsync();
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"Notifications\" DROP COLUMN \"WhyText\"");
+        DatabaseSchema.AddMissingColumns(db);
 
         var customer = CreateCustomer("C-01", preApprovedLimit: 80_000_000);
         customer.Payments.Add(new CustomerPaymentEntity
@@ -70,6 +72,7 @@ public class MatchingServiceTests
         Assert.Equal("Bread delivery payment", Assert.Single(evaluator.LastCustomer!.IncomingPayments).PurposeDescription);
         Assert.Equal(new[] { "511680" }, evaluator.LastTenders!.Select(tender => tender.TenderId));
         Assert.Equal("Bread supply", await db.Notifications.Select(notification => notification.Title).SingleAsync());
+        Assert.Equal(match.MatchReason, await db.Notifications.Select(notification => notification.WhyText).SingleAsync());
     }
 
     [Fact]
