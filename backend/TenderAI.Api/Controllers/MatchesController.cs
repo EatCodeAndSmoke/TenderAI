@@ -45,14 +45,19 @@ namespace TenderAI.Api.Controllers
                 logger.LogError(ex, "AI tender matching returned an invalid assessment.");
                 return Problem(
                     statusCode: StatusCodes.Status502BadGateway,
-                    title: "AI matching could not be completed. Existing results were kept.");
+                    title: "Amazon Bedrock returned an invalid matching response. Check API logs; existing results were kept.");
             }
             catch (AmazonServiceException ex)
             {
-                logger.LogError(ex, "Amazon Bedrock failed during tender matching.");
+                logger.LogError(
+                    ex,
+                    "Amazon Bedrock failed during tender matching. ErrorCode: {ErrorCode}; StatusCode: {StatusCode}",
+                    ex.ErrorCode,
+                    ex.StatusCode);
+                var errorCode = string.IsNullOrWhiteSpace(ex.ErrorCode) ? "service error" : ex.ErrorCode;
                 return Problem(
                     statusCode: StatusCodes.Status502BadGateway,
-                    title: "AI matching could not be completed. Existing results were kept.");
+                    title: $"Amazon Bedrock request failed ({errorCode}). Check model access, region, and API logs; existing results were kept.");
             }
         }
 

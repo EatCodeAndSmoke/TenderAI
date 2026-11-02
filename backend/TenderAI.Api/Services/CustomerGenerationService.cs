@@ -37,12 +37,18 @@ namespace TenderAI.Api.Services
 
         public async Task<IReadOnlyList<CustomerRecordDto>> GenerateAsync(CancellationToken ct)
         {
-            var tenders = await db.Tenders
+            var now = DateTime.UtcNow.AddHours(5);
+            var storedTenders = await db.Tenders
                 .AsNoTracking()
+                .Include(tender => tender.Products)
+                .Where(tender => tender.EndDate >= now)
                 .Where(t => t.Summary != null && t.Summary != "")
-                .Select(t => new TenderSource(t.Summary!, t.StartPrice, t.RegionName, t.DeliveryRegion, t.DeliveryDistrict))
                 .ToListAsync(ct);
-            tenders = tenders.Where(t => !string.IsNullOrWhiteSpace(t.Summary)).ToList();
+            var tenders = storedTenders
+                .Where(tender => !string.IsNullOrWhiteSpace(tender.Summary))
+                .Select(ToTenderSource)
+                .Where(tender => tender.Products.Count > 0 && FindIndustry(tender.MatchingEvidence) is not null)
+                .ToList();
             if (tenders.Count == 0)
             {
                 throw new NoAvailableTenderSummaryException();
@@ -65,9 +71,9 @@ namespace TenderAI.Api.Services
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             var firstMatchingTender = Pick(tenders);
-            var firstExpectedIndustry = FindIndustry(firstMatchingTender.Summary);
+            var firstExpectedIndustry = FindIndustry(firstMatchingTender.MatchingEvidence);
             var secondMatchingTender = PickDistinctMatchingTender(tenders, firstMatchingTender, firstExpectedIndustry);
-            var secondExpectedIndustry = FindIndustry(secondMatchingTender.Summary);
+            var secondExpectedIndustry = FindIndustry(secondMatchingTender.MatchingEvidence);
             var canUseDistinctActivities = firstExpectedIndustry is not null
                 && secondExpectedIndustry is not null
                 && !StringComparer.Ordinal.Equals(firstExpectedIndustry.Code, secondExpectedIndustry.Code);
@@ -109,7 +115,7 @@ namespace TenderAI.Api.Services
                     ? NormalizePaymentDescriptions(
                         draft.RecentPaymentDescriptions,
                         industry,
-                        plan.Tender.Summary,
+                        plan.Tender,
                         usedPayments)
                     : [];
                 var profile = new ValidatedProfile(plan, companyName, industry, paymentDescriptions);
@@ -142,7 +148,7 @@ namespace TenderAI.Api.Services
             IReadOnlyCollection<string> excludedNames,
             CancellationToken ct) =>
             profileGenerator.GenerateAsync(
-                plan.Tender.Summary,
+                plan.Tender.MatchingEvidence,
                 plan.LanguageCode,
                 plan.MatchesTender,
                 excludedNames,
@@ -227,24 +233,25 @@ namespace TenderAI.Api.Services
         private static IReadOnlyList<string> NormalizePaymentDescriptions(
             IReadOnlyList<string>? modelDescriptions,
             IndustryDefinition industry,
-            string tenderSummary,
+            TenderSource tender,
             IReadOnlySet<string> alreadyUsed)
         {
             if (modelDescriptions is { Count: 3 })
             {
                 var cleaned = modelDescriptions
-                    .Select(description => CleanPaymentDescription(description, tenderSummary))
+                    .Select(description => CleanPaymentDescription(description, tender.MatchingEvidence))
                     .ToArray();
                 if (cleaned.All(description => description is not null)
                     && cleaned.Distinct(StringComparer.OrdinalIgnoreCase).Count() == 3
                     && ArePaymentDescriptionsVaried(cleaned!)
+                    && cleaned.Take(2).All(description => ReferencesTenderProduct(description!, tender))
                     && cleaned.All(description => !alreadyUsed.Contains(NormalizePaymentDescription(description!))))
                 {
                     return cleaned.Select(description => description!).ToArray();
                 }
             }
 
-            return CreateUniquePaymentDescriptions(industry, alreadyUsed);
+            return CreateUniquePaymentDescriptions(tender, industry, alreadyUsed);
         }
 
         private static string? CleanPaymentDescription(string? value, string tenderSummary)
@@ -264,41 +271,19 @@ namespace TenderAI.Api.Services
         }
 
         private static IReadOnlyList<string> CreateUniquePaymentDescriptions(
+            TenderSource tender,
             IndustryDefinition industry,
             IReadOnlySet<string> alreadyUsed)
         {
-            var templates = industry.Code switch
+            var productAnchor = tender.Products
+                .Select(GetPaymentAnchor)
+                .FirstOrDefault(anchor => !string.IsNullOrWhiteSpace(anchor))
+                ?? industry.Description.ToLowerInvariant();
+            var templates = new[]
             {
-                "10710" => new[]
-                {
-                    "Payment for bread delivery, contract No",
-                    "Bakery order settlement, invoice No",
-                    "Purchase of flour and yeast, invoice No"
-                },
-                "46390" => new[]
-                {
-                    "Payment for food supply, contract No",
-                    "Grocery delivery settlement, invoice No",
-                    "Purchase of rice and cooking oil, invoice No"
-                },
-                "46499" => new[]
-                {
-                    "Payment for office paper delivery, contract No",
-                    "Stationery order settlement, invoice No",
-                    "Purchase of printer supplies, invoice No"
-                },
-                "81210" => new[]
-                {
-                    "Payment for office cleaning, contract No",
-                    "Monthly janitorial service, invoice No",
-                    "Purchase of cleaning supplies, invoice No"
-                },
-                _ => new[]
-                {
-                    $"Payment for {industry.Description.ToLowerInvariant()}, contract No",
-                    $"Service order settlement for {industry.Description.ToLowerInvariant()}, invoice No",
-                    $"Purchase related to {industry.Description.ToLowerInvariant()}, invoice No"
-                }
+                $"Payment for {productAnchor} supply, contract No",
+                $"Delivery of {productAnchor}, invoice No",
+                $"Purchase order for {productAnchor}, contract No"
             };
 
             var result = new List<string>(3);
@@ -315,6 +300,40 @@ namespace TenderAI.Api.Services
             }
 
             return result;
+        }
+
+        private static bool ReferencesTenderProduct(string description, TenderSource tender)
+        {
+            var paymentWords = WordsPattern.Matches(description)
+                .Select(match => match.Value)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return tender.Products
+                .SelectMany(ProductWords)
+                .Any(paymentWords.Contains);
+        }
+
+        private static IEnumerable<string> ProductWords(TenderProductSource product)
+        {
+            foreach (var value in new[] { product.ProductName, product.CategoryName, product.Description })
+            {
+                if (string.IsNullOrWhiteSpace(value)) continue;
+                foreach (Match match in WordsPattern.Matches(value))
+                {
+                    if (match.Value.Length > 2 && !PaymentStopWords.Contains(match.Value))
+                    {
+                        yield return match.Value;
+                    }
+                }
+            }
+        }
+
+        private static string? GetPaymentAnchor(TenderProductSource product)
+        {
+            var words = ProductWords(product)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(3)
+                .ToArray();
+            return words.Length == 0 ? null : string.Join(' ', words);
         }
 
         private static string? NormalizeCompanyNameForDisplay(string? value, string tenderSummary)
@@ -445,16 +464,49 @@ namespace TenderAI.Api.Services
 
         private static TenderSource Pick(IReadOnlyList<TenderSource> tenders) => tenders[Random.Shared.Next(tenders.Count)];
 
+        private static TenderSource ToTenderSource(TenderEntity tender)
+        {
+            var products = tender.Products
+                .Where(product => !string.IsNullOrWhiteSpace(product.ProductName))
+                .OrderBy(product => product.OrderNum)
+                .Select(product => new TenderProductSource(
+                    product.ProductName,
+                    product.CategoryName,
+                    product.Description,
+                    product.TechnicalSpecifications))
+                .ToList();
+            var matchingEvidence = string.Join(
+                "\n",
+                new[] { tender.Summary, tender.Name, tender.DetailedName }
+                    .Concat(products.SelectMany(product => new[]
+                    {
+                        product.ProductName,
+                        product.CategoryName,
+                        product.Description,
+                        product.TechnicalSpecifications
+                    }))
+                    .Where(value => !string.IsNullOrWhiteSpace(value)));
+
+            return new TenderSource(
+                tender.Summary!,
+                matchingEvidence,
+                tender.StartPrice,
+                tender.RegionName,
+                tender.DeliveryRegion,
+                tender.DeliveryDistrict,
+                products);
+        }
+
         private static TenderSource PickDistinctMatchingTender(
             IReadOnlyList<TenderSource> tenders,
             TenderSource first,
             IndustryDefinition? firstIndustry)
         {
             var distinctActivityTenders = tenders
-                .Where(tender => !StringComparer.Ordinal.Equals(tender.Summary, first.Summary))
+                .Where(tender => !StringComparer.Ordinal.Equals(tender.MatchingEvidence, first.MatchingEvidence))
                 .Where(tender =>
                 {
-                    var industry = FindIndustry(tender.Summary);
+                    var industry = FindIndustry(tender.MatchingEvidence);
                     return firstIndustry is not null
                         && industry is not null
                         && !StringComparer.Ordinal.Equals(firstIndustry.Code, industry.Code);
@@ -463,12 +515,17 @@ namespace TenderAI.Api.Services
             if (distinctActivityTenders.Count > 0) return Pick(distinctActivityTenders);
 
             var differentSummaries = tenders
-                .Where(tender => !StringComparer.Ordinal.Equals(tender.Summary, first.Summary))
+                .Where(tender => !StringComparer.Ordinal.Equals(tender.MatchingEvidence, first.MatchingEvidence))
                 .ToList();
             return differentSummaries.Count > 0 ? Pick(differentSummaries) : first;
         }
 
         private static string Pick(string[] values) => values[Random.Shared.Next(values.Length)];
+
+        private static readonly HashSet<string> PaymentStopWords = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "and", "for", "the", "with", "from", "new", "supply", "purchase", "product", "products", "goods"
+        };
 
         private sealed record CustomerIdentity(string CustomerId, string TaxCode);
         private sealed record IndustryDefinition(string Code, string Description);
@@ -485,11 +542,23 @@ namespace TenderAI.Api.Services
             string CompanyName,
             IndustryDefinition Industry,
             IReadOnlyList<string> PaymentDescriptions);
-        private sealed record TenderSource(string Summary, decimal StartPrice, string? RegionName, string? DeliveryRegion, string? DeliveryDistrict);
+        private sealed record TenderProductSource(
+            string ProductName,
+            string? CategoryName,
+            string? Description,
+            string? TechnicalSpecifications);
+        private sealed record TenderSource(
+            string Summary,
+            string MatchingEvidence,
+            decimal StartPrice,
+            string? RegionName,
+            string? DeliveryRegion,
+            string? DeliveryDistrict,
+            IReadOnlyList<TenderProductSource> Products);
     }
 
     public sealed class NoAvailableTenderSummaryException()
-        : Exception("Load at least one tender with an English summary before generating customers.");
+        : Exception("Load at least one open tender with products and an activity that can be matched before generating customers.");
 
     public sealed class CustomerProfileGenerationException(string message, Exception? innerException = null)
         : Exception(message, innerException);

@@ -13,7 +13,7 @@ Selecting **Start matching** evaluates current database customers against open U
 
 Each evaluated customer/tender pair is a billable model invocation. Runs are limited to four concurrent invocations. Loan-application invitations are calculated locally and require a pre-approved limit; suggested amounts do not exceed that limit and are not loan approvals.
 
-New databases do not receive fictional customer or notification seed data automatically. The Customers page's **Generate Random Customers** button creates and saves three fictional demo profiles based on existing tender summaries; load UZEX tenders first. Matching still reads the saved customer and tender records from the database. Startup removes the exact legacy sample profiles and old notifications that have no matching explanation.
+New databases do not receive fictional customer or notification seed data automatically. The Customers page's **Generate Random Customers** button creates and saves three fictional demo profiles from currently open tenders that have products and a supported activity: two profiles have product-specific incoming-payment evidence as positive-match candidates, and one is intentionally non-matching. Load open UZEX tenders first. Matching still evaluates the saved customer and tender records with Bedrock. Startup removes the exact legacy sample profiles and old notifications that have no matching explanation.
 
 ## EC2 role permissions
 

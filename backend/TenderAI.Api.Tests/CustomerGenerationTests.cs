@@ -95,6 +95,14 @@ public class CustomerGenerationTests
         Assert.All(matched, customer => Assert.Contains(customer.Payments, payment =>
             payment.PurposeDescription.Contains("bread", StringComparison.OrdinalIgnoreCase)
             || payment.PurposeDescription.Contains("food", StringComparison.OrdinalIgnoreCase)));
+        Assert.All(matched, customer =>
+        {
+            var expectedProduct = customer.IndustryCode == "10710" ? "bread" : "food";
+            var incomingPayments = customer.Payments.Where(payment => payment.IsIncoming).ToList();
+            Assert.Equal(2, incomingPayments.Count);
+            Assert.All(incomingPayments, payment =>
+                Assert.Contains(expectedProduct, payment.PurposeDescription, StringComparison.OrdinalIgnoreCase));
+        });
 
         var unmatched = Assert.Single(persisted, customer => customer.OnRegister);
         Assert.Empty(unmatched.Payments);
@@ -243,6 +251,48 @@ public class CustomerGenerationTests
         Assert.Equal(StatusCodes.Status400BadRequest, problem.StatusCode);
         Assert.Equal(0, await db.Customers.CountAsync());
         Assert.Equal(0, await db.CustomerPayments.CountAsync());
+    }
+
+    [Fact]
+    public async Task GenerateUsesOnlyOpenTendersForMatchingProfiles()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<TenderAiDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var db = new TenderAiDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+
+        var expiredBreadTender = CreateTender(601, "The buyer is purchasing bread for public schools.");
+        expiredBreadTender.EndDate = DateTime.Today.AddDays(-1);
+        db.Tenders.AddRange(
+            expiredBreadTender,
+            CreateTender(602, "Supply of food products to regional hospitals."));
+        await db.SaveChangesAsync();
+
+        var response = await new CustomersController(db)
+            .Generate(new CustomerGenerationService(db, new FakeProfileGenerator()), CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(response.Result);
+        var generated = Assert.IsAssignableFrom<IEnumerable<CustomerRecordDto>>(ok.Value).ToList();
+        var matchingProfiles = generated.Where(customer => !customer.OnRegister).ToList();
+        Assert.Equal(2, matchingProfiles.Count);
+        Assert.All(matchingProfiles, customer =>
+        {
+            Assert.Equal("46390", customer.Customer!.Industry!.IndustryCode);
+            Assert.All(customer.RecentPayments.Where(payment => payment.IsIncoming), payment =>
+                Assert.Contains("food", payment.PurposeDescription, StringComparison.OrdinalIgnoreCase));
+        });
+
+        var matches = await new MatchingService(
+            db,
+            new ProductEvidenceEvaluator(),
+            new FixedTimeProvider(new DateTimeOffset(
+                DateTime.SpecifyKind(DateTime.Today.AddDays(1).AddHours(12), DateTimeKind.Unspecified),
+                TimeSpan.FromHours(5)).ToUniversalTime()))
+            .RunAsync(CancellationToken.None);
+        Assert.Equal(2, matches.Select(match => match.CustomerId).Distinct().Count());
     }
 
     [Fact]
@@ -404,23 +454,38 @@ public class CustomerGenerationTests
         Assert.Contains(summary, prompt);
     }
 
-    private static TenderEntity CreateTender(long id, string summary) => new()
+    private static TenderEntity CreateTender(long id, string summary)
     {
-        Id = id,
-        DisplayNo = id.ToString(),
-        Source = "UZEX",
-        SourceUrl = $"https://example.test/tenders/{id}",
-        Name = summary,
-        BuyerName = "Public buyer",
-        StartDate = DateTime.Today,
-        EndDate = DateTime.Today.AddDays(30),
-        StartPrice = 240_000_000,
-        CurrencyCode = "UZS",
-        Summary = summary,
-        RegionName = "Tashkent",
-        DeliveryRegion = "Tashkent",
-        DeliveryDistrict = "Yunusobod"
-    };
+        var productName = summary.Contains("bread", StringComparison.OrdinalIgnoreCase)
+            ? "bread"
+            : summary.Contains("food", StringComparison.OrdinalIgnoreCase) ? "food products" : summary;
+        return new TenderEntity
+        {
+            Id = id,
+            DisplayNo = id.ToString(),
+            Source = "UZEX",
+            SourceUrl = $"https://example.test/tenders/{id}",
+            Name = summary,
+            BuyerName = "Public buyer",
+            StartDate = DateTime.Today,
+            EndDate = DateTime.Today.AddDays(30),
+            StartPrice = 240_000_000,
+            CurrencyCode = "UZS",
+            Summary = summary,
+            RegionName = "Tashkent",
+            DeliveryRegion = "Tashkent",
+            DeliveryDistrict = "Yunusobod",
+            Products =
+            [
+                new TenderProductEntity
+                {
+                    OrderNum = 1,
+                    ProductName = productName,
+                    CategoryName = productName
+                }
+            ]
+        };
+    }
 
     private static bool MeetsFinancingTerms(CustomerEntity customer, DateOnly today)
     {
@@ -554,5 +619,36 @@ public class CustomerGenerationTests
             IReadOnlyCollection<string> excludedPaymentDescriptions,
             CancellationToken ct) =>
             Task.FromException<CustomerProfileDraft>(new CustomerProfileGenerationException("Bedrock unavailable."));
+    }
+
+    private sealed class ProductEvidenceEvaluator : ITenderMatchEvaluator
+    {
+        public Task<TenderMatchEvaluation> EvaluateAsync(
+            string industryCode,
+            string industryName,
+            IReadOnlyCollection<TenderProductEvidence> products,
+            IReadOnlyCollection<IncomingPaymentEvidence> incomingPayments,
+            CancellationToken ct)
+        {
+            var tenderProducts = string.Join(' ', products.Select(product => product.ProductName));
+            var payments = string.Join(' ', incomingPayments.Select(payment => payment.PurposeDescription));
+            var isFoodTender = tenderProducts.Contains("food", StringComparison.OrdinalIgnoreCase);
+            var activityMatches = isFoodTender
+                ? industryCode == "46390"
+                : industryCode == "10710" && tenderProducts.Contains("bread", StringComparison.OrdinalIgnoreCase);
+            var paymentsMatch = isFoodTender
+                ? payments.Contains("food", StringComparison.OrdinalIgnoreCase)
+                : payments.Contains("bread", StringComparison.OrdinalIgnoreCase);
+
+            return Task.FromResult(new TenderMatchEvaluation(
+                activityMatches,
+                paymentsMatch,
+                "The activity and incoming-payment descriptions support the requested product."));
+        }
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
     }
 }

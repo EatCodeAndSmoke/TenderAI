@@ -59,15 +59,39 @@ namespace TenderAI.Api.Services
                 Body = requestBodyStream
             }, ct);
 
-            using var responseBody = response.Body;
-            using var responseJson = await JsonDocument.ParseAsync(responseBody, cancellationToken: ct);
-            var responseText = responseJson.RootElement
-                .GetProperty("output")
-                .GetProperty("message")
-                .GetProperty("content")
-                .EnumerateArray()
-                .Select(block => block.TryGetProperty("text", out var text) ? text.GetString() : null)
-                .FirstOrDefault(text => !string.IsNullOrWhiteSpace(text));
+            JsonDocument responseJson;
+            using (var responseBody = response.Body)
+            {
+                try
+                {
+                    responseJson = await JsonDocument.ParseAsync(responseBody, cancellationToken: ct);
+                }
+                catch (JsonException ex)
+                {
+                    throw new TenderMatchEvaluationException("Amazon Bedrock returned invalid response JSON.", ex);
+                }
+            }
+
+            string? responseText;
+            using (responseJson)
+            {
+                var root = responseJson.RootElement;
+                if (root.ValueKind != JsonValueKind.Object
+                    || !root.TryGetProperty("output", out var output)
+                    || output.ValueKind != JsonValueKind.Object
+                    || !output.TryGetProperty("message", out var message)
+                    || message.ValueKind != JsonValueKind.Object
+                    || !message.TryGetProperty("content", out var content)
+                    || content.ValueKind != JsonValueKind.Array)
+                {
+                    throw new TenderMatchEvaluationException("Amazon Bedrock returned an invalid response structure.");
+                }
+
+                responseText = content.EnumerateArray()
+                    .Select(block => block.ValueKind == JsonValueKind.Object
+                        && block.TryGetProperty("text", out var text) ? text.GetString() : null)
+                    .FirstOrDefault(text => !string.IsNullOrWhiteSpace(text));
+            }
 
             if (string.IsNullOrWhiteSpace(responseText))
             {
