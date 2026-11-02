@@ -51,7 +51,7 @@ function LoanCell({ match }) {
 
 export default function MatchesPage() {
   const matching = useMatchingRun();
-  const { matches, status, startedAt, error, refresh, start, clear } = matching;
+  const { matches, status, startedAt, error, progress, refresh, start, clear } = matching;
   const [selected, setSelected] = useState(null);
   const [clearing, setClearing] = useState(false);
   const offered = matches.filter((match) => match.offer).length;
@@ -61,7 +61,7 @@ export default function MatchesPage() {
   const summary = loading
     ? 'Loading saved matches…'
     : running
-      ? 'Checking database customers against open UZEX tenders…'
+      ? `Evaluated ${progress.completed} of ${progress.total} customers; ${matches.length} saved matches are listed.`
       : `${matches.length} ${matches.length === 1 ? 'match' : 'matches'} from the latest run. ${offered} include a loan application invitation.`;
 
   let body;
@@ -148,6 +148,13 @@ export default function MatchesPage() {
 
       {error && status !== 'error' && (
         <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
+      )}
+      {running && (
+        <p role="status" className="mb-4 rounded-lg border border-brand-200 bg-brand-50 px-4 py-3 text-sm text-brand-800">
+          Evaluated {progress.completed} of {progress.total} customers
+          {progress.failed > 0 ? `; ${progress.failed} customer evaluations failed.` : '.'}
+          {' '}Each completed customer’s results are saved and shown as they arrive.
+        </p>
       )}
       {startedAt && status !== 'running' && (
         <p className="mb-3 text-xs text-muted">Last run: {formatRunTime(startedAt)}</p>

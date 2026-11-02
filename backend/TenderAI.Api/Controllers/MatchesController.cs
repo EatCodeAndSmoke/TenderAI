@@ -1,4 +1,5 @@
-using Amazon.Runtime;
+using System.Text.Json;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TenderAI.Api.Contracts;
@@ -14,6 +15,8 @@ namespace TenderAI.Api.Controllers
         MatchingService matchingService,
         ILogger<MatchesController> logger) : ControllerBase
     {
+        private static readonly JsonSerializerOptions EventJsonOptions = new(JsonSerializerDefaults.Web);
+
         [HttpGet]
         public async Task<ActionResult<IReadOnlyList<MatchDto>>> GetAll(CancellationToken ct)
         {
@@ -33,31 +36,47 @@ namespace TenderAI.Api.Controllers
                 .ToList();
         }
 
-        [HttpPost("run")]
-        public async Task<ActionResult<IReadOnlyList<MatchDto>>> Run(CancellationToken ct)
+        [HttpPost("run/stream")]
+        public async Task RunStreaming(CancellationToken ct)
         {
+            Response.ContentType = "text/event-stream";
+            Response.Headers.CacheControl = "no-cache, no-store";
+            Response.Headers.Append("X-Accel-Buffering", "no");
+            HttpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
+
             try
             {
-                return Ok(await matchingService.RunAsync(ct));
+                await foreach (var runEvent in matchingService.RunStreamingAsync(ct))
+                {
+                    await Response.WriteAsync(
+                        $"data: {JsonSerializer.Serialize(runEvent, EventJsonOptions)}\n\n",
+                        ct);
+                    await Response.Body.FlushAsync(ct);
+                }
             }
-            catch (TenderMatchEvaluationException ex)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                logger.LogError(ex, "AI tender matching returned an invalid assessment.");
-                return Problem(
-                    statusCode: StatusCodes.Status502BadGateway,
-                    title: "Amazon Bedrock returned an invalid matching response. Check API logs; existing results were kept.");
             }
-            catch (AmazonServiceException ex)
+            catch (Exception ex)
             {
-                logger.LogError(
-                    ex,
-                    "Amazon Bedrock failed during tender matching. ErrorCode: {ErrorCode}; StatusCode: {StatusCode}",
-                    ex.ErrorCode,
-                    ex.StatusCode);
-                var errorCode = string.IsNullOrWhiteSpace(ex.ErrorCode) ? "service error" : ex.ErrorCode;
-                return Problem(
-                    statusCode: StatusCodes.Status502BadGateway,
-                    title: $"Amazon Bedrock request failed ({errorCode}). Check model access, region, and API logs; existing results were kept.");
+                logger.LogError(ex, "Streaming tender matching failed.");
+                if (!Response.HasStarted)
+                {
+                    Response.Clear();
+                    Response.StatusCode = StatusCodes.Status502BadGateway;
+                    Response.ContentType = "application/problem+json";
+                    await Response.WriteAsJsonAsync(new ProblemDetails
+                    {
+                        Status = StatusCodes.Status502BadGateway,
+                        Title = "The matching run could not be started. Check the API logs."
+                    }, ct);
+                    return;
+                }
+
+                await Response.WriteAsync(
+                    $"data: {JsonSerializer.Serialize(new { type = "error", message = "The matching run stopped unexpectedly. Results already saved for completed customers were kept." }, EventJsonOptions)}\n\n",
+                    ct);
+                await Response.Body.FlushAsync(ct);
             }
         }
 

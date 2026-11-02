@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using TenderAI.Api.Controllers;
 using TenderAI.Api.Contracts;
 using TenderAI.Api.Data;
@@ -285,14 +286,25 @@ public class CustomerGenerationTests
                 Assert.Contains("food", payment.PurposeDescription, StringComparison.OrdinalIgnoreCase));
         });
 
-        var matches = await new MatchingService(
+        var matches = new MatchingService(
             db,
             new ProductEvidenceEvaluator(),
             new FixedTimeProvider(new DateTimeOffset(
                 DateTime.SpecifyKind(DateTime.Today.AddDays(1).AddHours(12), DateTimeKind.Unspecified),
-                TimeSpan.FromHours(5)).ToUniversalTime()))
-            .RunAsync(CancellationToken.None);
-        Assert.Equal(2, matches.Select(match => match.CustomerId).Distinct().Count());
+                TimeSpan.FromHours(5)).ToUniversalTime()),
+            NullLogger<MatchingService>.Instance);
+        var matchEvents = new List<MatchRunEvent>();
+        await foreach (var runEvent in matches.RunStreamingAsync(CancellationToken.None))
+        {
+            matchEvents.Add(runEvent);
+        }
+
+        Assert.Equal(2, matchEvents
+            .Where(runEvent => runEvent.Type == "customer-completed")
+            .SelectMany(runEvent => runEvent.Matches!)
+            .Select(match => match.CustomerId)
+            .Distinct()
+            .Count());
     }
 
     [Fact]
@@ -623,27 +635,31 @@ public class CustomerGenerationTests
 
     private sealed class ProductEvidenceEvaluator : ITenderMatchEvaluator
     {
-        public Task<TenderMatchEvaluation> EvaluateAsync(
-            string industryCode,
-            string industryName,
-            IReadOnlyCollection<TenderProductEvidence> products,
-            IReadOnlyCollection<IncomingPaymentEvidence> incomingPayments,
+        public Task<IReadOnlyList<TenderCandidateMatch>> EvaluateCustomerAsync(
+            CustomerMatchEvidence customer,
+            IReadOnlyCollection<TenderMatchEvidence> tenders,
             CancellationToken ct)
         {
-            var tenderProducts = string.Join(' ', products.Select(product => product.ProductName));
-            var payments = string.Join(' ', incomingPayments.Select(payment => payment.PurposeDescription));
-            var isFoodTender = tenderProducts.Contains("food", StringComparison.OrdinalIgnoreCase);
-            var activityMatches = isFoodTender
-                ? industryCode == "46390"
-                : industryCode == "10710" && tenderProducts.Contains("bread", StringComparison.OrdinalIgnoreCase);
-            var paymentsMatch = isFoodTender
-                ? payments.Contains("food", StringComparison.OrdinalIgnoreCase)
-                : payments.Contains("bread", StringComparison.OrdinalIgnoreCase);
-
-            return Task.FromResult(new TenderMatchEvaluation(
-                activityMatches,
-                paymentsMatch,
-                "The activity and incoming-payment descriptions support the requested product."));
+            var payments = string.Join(' ', customer.IncomingPayments.Select(payment => payment.PurposeDescription));
+            IReadOnlyList<TenderCandidateMatch> matches = tenders
+                .Where(tender =>
+                {
+                    var productText = string.Join(' ', tender.Products.Select(product => product.ProductName));
+                    var isFoodTender = productText.Contains("food", StringComparison.OrdinalIgnoreCase);
+                    var activityMatches = isFoodTender
+                        ? customer.IndustryCode == "46390"
+                        : customer.IndustryCode == "10710"
+                            && productText.Contains("bread", StringComparison.OrdinalIgnoreCase);
+                    var paymentsMatch = isFoodTender
+                        ? payments.Contains("food", StringComparison.OrdinalIgnoreCase)
+                        : payments.Contains("bread", StringComparison.OrdinalIgnoreCase);
+                    return activityMatches && paymentsMatch;
+                })
+                .Select(tender => new TenderCandidateMatch(
+                    tender.TenderId,
+                    "The activity and incoming-payment descriptions support the requested product."))
+                .ToList();
+            return Task.FromResult(matches);
         }
     }
 

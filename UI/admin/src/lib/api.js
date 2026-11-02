@@ -68,6 +68,78 @@ export const clearTenders = () => request('/tenders', { method: 'DELETE' });
 
 export const getMatches = () => request('/matches');
 
-export const runMatching = () => request('/matches/run', { method: 'POST' });
+export async function runMatching(onEvent, signal) {
+  let response;
+  try {
+    response = await fetch('/api/matches/run/stream', {
+      method: 'POST',
+      headers: { Accept: 'text/event-stream' },
+      signal
+    });
+  } catch {
+    throw new ApiError(0, "Can't reach the server. Check that the API is running and try again.");
+  }
+
+  if (!response.ok) {
+    const text = await response.text();
+    let body = null;
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      // The server may return a non-JSON proxy error.
+    }
+    throw new ApiError(response.status, problemMessage(response.status, body));
+  }
+  if (!response.body) {
+    throw new ApiError(response.status, 'The server did not start a matching result stream.');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let completed = false;
+
+  const dispatch = (block) => {
+    const data = block
+      .split('\n')
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).trimStart())
+      .join('\n');
+    if (!data) return;
+
+    let event;
+    try {
+      event = JSON.parse(data);
+    } catch {
+      throw new ApiError(response.status, 'The server sent an invalid matching event.');
+    }
+    if (event.type === 'error') {
+      throw new ApiError(response.status, event.message || 'The matching stream stopped unexpectedly.');
+    }
+    if (event.type === 'completed') completed = true;
+    onEvent(event);
+  };
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+      let separator;
+      while ((separator = buffer.indexOf('\n\n')) >= 0) {
+        dispatch(buffer.slice(0, separator));
+        buffer = buffer.slice(separator + 2);
+      }
+    }
+    buffer += decoder.decode().replace(/\r\n/g, '\n');
+    if (buffer.trim()) dispatch(buffer);
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (!completed) {
+    throw new ApiError(response.status, 'The matching stream ended before all customer results were reported.');
+  }
+}
 
 export const clearMatches = () => request('/matches', { method: 'DELETE' });

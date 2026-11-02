@@ -26,11 +26,9 @@ namespace TenderAI.Api.Services
             PropertyNameCaseInsensitive = true
         };
 
-        public async Task<TenderMatchEvaluation> EvaluateAsync(
-            string industryCode,
-            string industryName,
-            IReadOnlyCollection<TenderProductEvidence> products,
-            IReadOnlyCollection<IncomingPaymentEvidence> incomingPayments,
+        public async Task<IReadOnlyList<TenderCandidateMatch>> EvaluateCustomerAsync(
+            CustomerMatchEvidence customer,
+            IReadOnlyCollection<TenderMatchEvidence> tenders,
             CancellationToken ct)
         {
             var requestBody = JsonSerializer.Serialize(new
@@ -43,26 +41,18 @@ namespace TenderAI.Api.Services
                         role = "user",
                         content = new[]
                         {
-                            new
-                            {
-                                text = TenderMatchPrompt.Build(
-                                    industryCode,
-                                    industryName,
-                                    products,
-                                    incomingPayments)
-                            }
+                            new { text = TenderMatchPrompt.Build(customer, tenders) }
                         }
                     }
                 },
                 inferenceConfig = new
                 {
-                    max_new_tokens = 220,
+                    max_new_tokens = 4096,
                     temperature = 0
                 }
             });
 
             var response = await InvokeWithThrottleRetryAsync(requestBody, ct);
-
             JsonDocument responseJson;
             using (var responseBody = response.Body)
             {
@@ -102,10 +92,10 @@ namespace TenderAI.Api.Services
                 throw new TenderMatchEvaluationException("Amazon Bedrock returned an empty matching assessment.");
             }
 
-            TenderMatchAssessmentDraft? draft;
+            CustomerMatchDraft? draft;
             try
             {
-                draft = JsonSerializer.Deserialize<TenderMatchAssessmentDraft>(
+                draft = JsonSerializer.Deserialize<CustomerMatchDraft>(
                     RemoveMarkdownFence(responseText),
                     JsonOptions);
             }
@@ -114,25 +104,36 @@ namespace TenderAI.Api.Services
                 throw new TenderMatchEvaluationException("Amazon Bedrock returned invalid matching JSON.", ex);
             }
 
-            if (draft?.OkedSupportsProducts is null || draft.IncomingPaymentsSupportProducts is null)
+            if (draft?.Matches is null)
             {
-                throw new TenderMatchEvaluationException("Amazon Bedrock omitted required matching evidence.");
+                throw new TenderMatchEvaluationException("Amazon Bedrock omitted the required matches list.");
             }
 
-            var reason = draft.Reason?.Trim() ?? "";
-            if (draft.OkedSupportsProducts.Value
-                && draft.IncomingPaymentsSupportProducts.Value
-                && (reason.Length == 0
+            var knownTenderIds = tenders.Select(tender => tender.TenderId).ToHashSet(StringComparer.Ordinal);
+            var result = new List<TenderCandidateMatch>(draft.Matches.Count);
+            var returnedIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var match in draft.Matches)
+            {
+                var tenderId = match.TenderId?.Trim();
+                var reason = match.Reason?.Trim() ?? "";
+                if (string.IsNullOrWhiteSpace(tenderId)
+                    || !knownTenderIds.Contains(tenderId)
+                    || !returnedIds.Add(tenderId))
+                {
+                    throw new TenderMatchEvaluationException("Amazon Bedrock returned an unknown or duplicate tender ID.");
+                }
+
+                if (reason.Length == 0
                     || reason.Length > 240
-                    || reason.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length > 25))
-            {
-                throw new TenderMatchEvaluationException("Amazon Bedrock returned an invalid matching explanation.");
+                    || reason.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length > 25)
+                {
+                    throw new TenderMatchEvaluationException("Amazon Bedrock returned an invalid matching explanation.");
+                }
+
+                result.Add(new TenderCandidateMatch(tenderId, reason));
             }
 
-            return new TenderMatchEvaluation(
-                draft.OkedSupportsProducts.Value,
-                draft.IncomingPaymentsSupportProducts.Value,
-                reason);
+            return result;
         }
 
         private static string RemoveMarkdownFence(string text)
@@ -175,7 +176,7 @@ namespace TenderAI.Api.Services
                         500 * (1 << (attempt - 1)) + Random.Shared.Next(0, 251));
                     logger.LogWarning(
                         ex,
-                        "Bedrock throttled a tender-match request; retrying attempt {Attempt} of {MaxAttempts} after {DelayMs} ms.",
+                        "Bedrock throttled a customer matching request; retrying attempt {Attempt} of {MaxAttempts} after {DelayMs} ms.",
                         attempt + 1,
                         MaxInvocationAttempts,
                         delay.TotalMilliseconds);
@@ -193,10 +194,14 @@ namespace TenderAI.Api.Services
             || (!string.IsNullOrWhiteSpace(exception.ErrorCode)
                 && ThrottleErrorCodes.Contains(exception.ErrorCode));
 
-        private sealed class TenderMatchAssessmentDraft
+        private sealed class CustomerMatchDraft
         {
-            public bool? OkedSupportsProducts { get; set; }
-            public bool? IncomingPaymentsSupportProducts { get; set; }
+            public List<TenderCandidateMatchDraft>? Matches { get; set; }
+        }
+
+        private sealed class TenderCandidateMatchDraft
+        {
+            public string? TenderId { get; set; }
             public string? Reason { get; set; }
         }
     }
