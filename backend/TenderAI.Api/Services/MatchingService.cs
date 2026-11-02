@@ -207,8 +207,8 @@ namespace TenderAI.Api.Services
                 if (!knownTenderIds.Contains(match.TenderId)
                     || !ids.Add(match.TenderId)
                     || string.IsNullOrWhiteSpace(match.Reason)
-                    || match.Reason.Length > 240
-                    || match.Reason.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length > 25)
+                    || match.Reason.Length > TenderMatchPrompt.MaximumReasonCharacters
+                    || match.Reason.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length > TenderMatchPrompt.MaximumReasonWords)
                 {
                     throw new TenderMatchEvaluationException("The matching response contained invalid tender results.");
                 }
@@ -230,7 +230,7 @@ namespace TenderAI.Api.Services
                 CustomerId = customer.CustomerId,
                 LotId = tender.Id.ToString(CultureInfo.InvariantCulture),
                 CreatedAt = timestamp,
-                Title = tender.Name,
+                Title = string.IsNullOrWhiteSpace(tender.Summary) ? tender.Name : tender.Summary,
                 Body = GetTenderBody(tender),
                 Buyer = tender.BuyerName,
                 SourceUrl = tender.SourceUrl,

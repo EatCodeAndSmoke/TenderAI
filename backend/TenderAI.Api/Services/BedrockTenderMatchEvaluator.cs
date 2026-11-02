@@ -124,8 +124,8 @@ namespace TenderAI.Api.Services
                 }
 
                 if (reason.Length == 0
-                    || reason.Length > 240
-                    || reason.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length > 25)
+                    || reason.Length > TenderMatchPrompt.MaximumReasonCharacters
+                    || reason.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length > TenderMatchPrompt.MaximumReasonWords)
                 {
                     throw new TenderMatchEvaluationException("Amazon Bedrock returned an invalid matching explanation.");
                 }

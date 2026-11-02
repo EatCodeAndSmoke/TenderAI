@@ -42,7 +42,9 @@ export default function NotificationCard({ notification: n, isNew }) {
 
         <h2 className="mt-2 text-lg font-semibold">{n.title}</h2>
         <p className="mt-1 text-xs text-muted">Buyer: {n.buyer}</p>
-        <p className="mt-1.5 text-sm leading-relaxed text-ink/80">{n.body}</p>
+        {n.body && n.body !== n.title && (
+          <p className="mt-1.5 text-sm leading-relaxed text-ink/80">{n.body}</p>
+        )}
         {n.sourceUrl && (
           <a
             href={n.sourceUrl}

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
@@ -29,10 +30,28 @@ namespace TenderAI.Api.Controllers
             var customerNames = await db.Customers
                 .AsNoTracking()
                 .ToDictionaryAsync(customer => customer.CustomerId, customer => customer.Name, ct);
+            var tenderIds = notifications
+                .Select(notification => long.TryParse(notification.LotId, NumberStyles.None, CultureInfo.InvariantCulture, out var id)
+                    ? (long?)id
+                    : null)
+                .Where(id => id.HasValue)
+                .Select(id => id.GetValueOrDefault())
+                .Distinct()
+                .ToList();
+            var tenderSummaries = (await db.Tenders
+                .AsNoTracking()
+                .Where(tender => tenderIds.Contains(tender.Id))
+                .Select(tender => new { tender.Id, tender.Summary })
+                .ToListAsync(ct))
+                .ToDictionary(
+                    tender => tender.Id.ToString(CultureInfo.InvariantCulture),
+                    tender => tender.Summary);
 
             return notifications
                 .Where(notification => customerNames.ContainsKey(notification.CustomerId))
-                .Select(notification => notification.ToMatchDto(customerNames[notification.CustomerId]))
+                .Select(notification => notification.ToMatchDto(
+                    customerNames[notification.CustomerId],
+                    tenderSummaries.GetValueOrDefault(notification.LotId)))
                 .ToList();
         }
 

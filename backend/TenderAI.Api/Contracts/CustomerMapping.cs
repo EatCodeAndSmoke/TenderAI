@@ -84,12 +84,12 @@ namespace TenderAI.Api.Contracts
             }));
         }
 
-        public static NotificationDto ToDto(this NotificationEntity n) => new(
+        public static NotificationDto ToDto(this NotificationEntity n, string? tenderSummary = null) => new(
             n.Id,
             n.LotId,
             // SQLite doesn't keep DateTimeKind; the value is stored in UTC
             DateTime.SpecifyKind(n.CreatedAt, DateTimeKind.Utc),
-            n.Title,
+            TenderDisplayTitle(n.Title, tenderSummary),
             n.Body,
             n.Buyer,
             n.SourceUrl,
@@ -103,17 +103,20 @@ namespace TenderAI.Api.Contracts
             n.LoanDecisionReason,
             n.Offer is null ? null : new LoanOfferDto(n.Offer.Financing, n.Offer.Guarantee, n.Offer.PreApprovedLimit));
 
-        public static MatchDto ToMatchDto(this NotificationEntity n, string customerName) => new(
+        public static MatchDto ToMatchDto(this NotificationEntity n, string customerName, string? tenderSummary = null) => new(
             n.CustomerId,
             customerName,
             n.LotId,
-            n.Title,
+            TenderDisplayTitle(n.Title, tenderSummary),
             n.StartPrice,
             n.CurrencyCode,
             n.MatchReason,
             n.LoanDecisionReason,
             n.Offer is null ? null : new LoanOfferDto(n.Offer.Financing, n.Offer.Guarantee, n.Offer.PreApprovedLimit),
             DateTime.SpecifyKind(n.CreatedAt, DateTimeKind.Utc));
+
+        private static string TenderDisplayTitle(string title, string? tenderSummary) =>
+            string.IsNullOrWhiteSpace(tenderSummary) ? title : tenderSummary;
 
         // Full months between two dates, the same rule as the admin app's monthsSince()
         public static int MonthsBetween(DateOnly from, DateOnly to)

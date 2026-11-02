@@ -16,12 +16,13 @@ namespace TenderAI.Api.Services
         private static readonly Regex LegalFormPattern = new(@"\b(LLC|Ltd|JSC|Inc)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         private static readonly (Regex Pattern, string Code, string Description)[] Industries =
         [
+            (new(@"\b((medical|diagnostic|laboratory|surgical|dental|hospital)\s+(devices?|equipment|instruments?|apparatus|units?|kits?|machines?)|microscopes?)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant), "46690", "Wholesale of other machinery and equipment"),
             (new(@"\b(bread|bakery|bakeries|flour|buns?)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant), "10710", "Manufacture of bread"),
             (new(@"\b(food|foods|grocery|groceries|rice|meat|vegetable)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant), "46390", "Wholesale of food products"),
             (new(@"\b(paper|stationery|office supplies)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant), "46499", "Wholesale of paper and stationery"),
             (new(@"\b(cleaning|janitorial)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant), "81210", "General cleaning of buildings"),
             (new(@"\b(roof|repair|construction|renovation)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant), "41000", "Building construction and repair"),
-            (new(@"\b(medicine|medical|pharmaceutical)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant), "46460", "Wholesale of pharmaceutical goods"),
+            (new(@"\b(medical\s+(items?|supplies|products|goods|consumables)|pharmaceutical|pharmacy|medicines?|medications?|drugs?|vaccines?)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant), "46460", "Wholesale of pharmaceutical goods"),
             (new(@"\b(computer|laptop|hardware)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant), "46510", "Wholesale of computers and peripheral equipment"),
             (new(@"\b(software|information technology)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant), "62010", "Computer programming activities"),
             (new(@"\b(laboratory|in-vitro|diagnostic|microscope|technical unit|equipment|machinery|tools)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant), "46690", "Wholesale of other machinery and equipment"),
@@ -70,7 +71,10 @@ namespace TenderAI.Api.Services
                 .Where(description => description.Length > 0)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            var firstMatchingTender = Pick(tenders);
+            var loanEligibleTenders = tenders
+                .Where(tender => string.Equals(tender.CurrencyCode, "UZS", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var firstMatchingTender = Pick(loanEligibleTenders.Count > 0 ? loanEligibleTenders : tenders);
             var firstExpectedIndustry = FindIndustry(firstMatchingTender.MatchingEvidence);
             var secondMatchingTender = PickDistinctMatchingTender(tenders, firstMatchingTender, firstExpectedIndustry);
             var secondExpectedIndustry = FindIndustry(secondMatchingTender.MatchingEvidence);
@@ -79,7 +83,14 @@ namespace TenderAI.Api.Services
                 && !StringComparer.Ordinal.Equals(firstExpectedIndustry.Code, secondExpectedIndustry.Code);
             var plans = new[]
             {
-                new GenerationPlan("en", true, true, firstMatchingTender, firstExpectedIndustry, Random.Shared.Next(24, 61), false),
+                new GenerationPlan(
+                    "en",
+                    true,
+                    string.Equals(firstMatchingTender.CurrencyCode, "UZS", StringComparison.OrdinalIgnoreCase),
+                    firstMatchingTender,
+                    firstExpectedIndustry,
+                    Random.Shared.Next(24, 61),
+                    false),
                 new GenerationPlan("ru", true, false, secondMatchingTender, secondExpectedIndustry, 18, canUseDistinctActivities),
                 new GenerationPlan("uz", false, false, Pick(tenders), null, 6, false)
             };
@@ -164,7 +175,7 @@ namespace TenderAI.Api.Services
                 ? Math.Max(80_000_000L, CeilingToLong(tender.StartPrice / 3m))
                 : Random.Shared.Next(20, 71) * 1_000_000L;
             var preApprovedLimit = plan.LoanEligible
-                ? Math.Max(Random.Shared.Next(100, 301) * 1_000_000L, CeilingToLong(tender.StartPrice / 2m))
+                ? Math.Max(Random.Shared.Next(100, 301) * 1_000_000L, CeilingToLong(tender.StartPrice * 0.8m))
                 : plan.MatchesTender ? 150_000_000L : (long?)null;
 
             return new CustomerEntity
@@ -275,10 +286,28 @@ namespace TenderAI.Api.Services
             IndustryDefinition industry,
             IReadOnlySet<string> alreadyUsed)
         {
-            var productAnchor = tender.Products
-                .Select(GetPaymentAnchor)
-                .FirstOrDefault(anchor => !string.IsNullOrWhiteSpace(anchor))
-                ?? industry.Description.ToLowerInvariant();
+            var productAnchor = industry.Code switch
+            {
+                "10710" => "bread",
+                "46390" => "food products",
+                "46499" => "paper and stationery",
+                "81210" => "cleaning services",
+                "41000" => "construction materials",
+                "46460" => Regex.IsMatch(tender.Summary, @"\bmedical\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)
+                    ? "medical supplies"
+                    : "pharmaceutical supplies",
+                "46510" => "computer equipment",
+                "62010" => "software services",
+                "46690" => "medical and laboratory equipment",
+                "46610" => "agricultural machinery",
+                "46470" => "furniture and lighting",
+                "46420" => "clothing and footwear",
+                "47300" => "automotive fuel",
+                _ => tender.Products
+                    .Select(GetPaymentAnchor)
+                    .FirstOrDefault(anchor => !string.IsNullOrWhiteSpace(anchor))
+                    ?? industry.Description.ToLowerInvariant()
+            };
             var templates = new[]
             {
                 $"Payment for {productAnchor} supply, contract No",
@@ -309,12 +338,21 @@ namespace TenderAI.Api.Services
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             return tender.Products
                 .SelectMany(ProductWords)
+                .Concat(WordsPattern.Matches(tender.Summary)
+                    .Select(match => match.Value)
+                    .Where(word => word.Length > 2 && !PaymentStopWords.Contains(word)))
                 .Any(paymentWords.Contains);
         }
 
         private static IEnumerable<string> ProductWords(TenderProductSource product)
         {
-            foreach (var value in new[] { product.ProductName, product.CategoryName, product.Description })
+            foreach (var value in new[]
+            {
+                product.ProductName,
+                product.CategoryName,
+                product.Description,
+                product.TechnicalSpecifications
+            })
             {
                 if (string.IsNullOrWhiteSpace(value)) continue;
                 foreach (Match match in WordsPattern.Matches(value))
@@ -491,6 +529,7 @@ namespace TenderAI.Api.Services
                 tender.Summary!,
                 matchingEvidence,
                 tender.StartPrice,
+                tender.CurrencyCode,
                 tender.RegionName,
                 tender.DeliveryRegion,
                 tender.DeliveryDistrict,
@@ -551,6 +590,7 @@ namespace TenderAI.Api.Services
             string Summary,
             string MatchingEvidence,
             decimal StartPrice,
+            string CurrencyCode,
             string? RegionName,
             string? DeliveryRegion,
             string? DeliveryDistrict,

@@ -6,6 +6,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using TenderAI.Api.Controllers;
+using TenderAI.Api.Contracts;
 using TenderAI.Api.Data;
 using TenderAI.Api.Data.Entities;
 using TenderAI.Api.Services;
@@ -46,7 +47,9 @@ public class MatchingServiceTests
             Amount = 500_000
         });
         db.Customers.Add(customer);
-        db.Tenders.Add(CreateTender());
+        var tender = CreateTender(name: "PQ-20-sonli qaror doirasida tibbiy buyumlarni xarid qilish");
+        tender.Summary = "Purchase of bread for school kitchens";
+        db.Tenders.Add(tender);
         var expiredTender = CreateTender(511681, "Expired bread supply");
         expiredTender.EndDate = new DateTime(2026, 10, 30);
         db.Tenders.Add(expiredTender);
@@ -60,7 +63,7 @@ public class MatchingServiceTests
         var match = Assert.Single(result.Matches!);
         Assert.Equal("C-01", match.CustomerId);
         Assert.Equal("511680", match.LotId);
-        Assert.Equal("Bread supply", match.TenderTitle);
+        Assert.Equal("Purchase of bread for school kitchens", match.TenderTitle);
         Assert.Equal(80_000_000L, match.Offer?.Financing);
         Assert.Equal(3_000_000L, match.Offer?.Guarantee);
         Assert.Equal(80_000_000L, match.Offer?.PreApprovedLimit);
@@ -71,7 +74,7 @@ public class MatchingServiceTests
         Assert.Equal("Manufacture of bread", evaluator.LastCustomer?.IndustryName);
         Assert.Equal("Bread delivery payment", Assert.Single(evaluator.LastCustomer!.IncomingPayments).PurposeDescription);
         Assert.Equal(new[] { "511680" }, evaluator.LastTenders!.Select(tender => tender.TenderId));
-        Assert.Equal("Bread supply", await db.Notifications.Select(notification => notification.Title).SingleAsync());
+        Assert.Equal("Purchase of bread for school kitchens", await db.Notifications.Select(notification => notification.Title).SingleAsync());
         Assert.Equal(match.MatchReason, await db.Notifications.Select(notification => notification.WhyText).SingleAsync());
     }
 
@@ -284,12 +287,43 @@ public class MatchingServiceTests
         Assert.Contains("OKED code", prompt);
         Assert.Contains("incoming payment descriptions", prompt);
         Assert.Contains("location is optional", prompt);
+        Assert.Contains("up to 45 words", prompt);
+        Assert.Contains("immediately follow it with its English translation", prompt);
         Assert.Contains("C-01", prompt);
         Assert.Contains("Bread supply payment", prompt);
         Assert.Contains("511680", prompt);
         Assert.Contains("Fresh bread", prompt);
         Assert.DoesNotContain("preApprovedLimit", prompt, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("overdueAmount", prompt, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void NotificationDtosUseTheStoredEnglishSummaryAsTheTenderTitle()
+    {
+        var notification = new NotificationEntity
+        {
+            Id = "N-123",
+            CustomerId = "C-01",
+            LotId = "511680",
+            CreatedAt = new DateTime(2026, 11, 2),
+            Title = "PQ-20-sonli qaror doirasida tibbiy buyumlarni xarid qilish",
+            Body = "Purchase of medical items",
+            Buyer = "Health department",
+            SourceUrl = "https://example.test/tender/511680",
+            Region = "Tashkent",
+            StartPrice = 100_000_000,
+            CurrencyCode = "UZS",
+            Deadline = new DateOnly(2026, 11, 30),
+            Requirements = [],
+            MatchReason = "OKED 46460 and medical-supply payments support this match.",
+            LoanDecisionReason = "No pre-approved limit is on record.",
+            WhyText = "OKED 46460 and medical-supply payments support this match."
+        };
+
+        Assert.Equal("Purchase of medical items", notification.ToDto("Purchase of medical items").Title);
+        Assert.Equal("Purchase of medical items", notification
+            .ToMatchDto("Medical supplier", "Purchase of medical items")
+            .TenderTitle);
     }
 
     private static async Task<List<MatchRunEvent>> CollectEvents(MatchingService service)

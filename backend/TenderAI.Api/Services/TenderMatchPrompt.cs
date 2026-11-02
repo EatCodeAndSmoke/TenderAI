@@ -5,6 +5,9 @@ namespace TenderAI.Api.Services
 {
     public static class TenderMatchPrompt
     {
+        internal const int MaximumReasonCharacters = 400;
+        internal const int MaximumReasonWords = 45;
+
         private const string Instructions = """
             Find every open tender in the supplied list that is a genuine fit for this customer.
             Match only when BOTH the customer's OKED code and business activity are relevant to at least one requested
@@ -20,12 +23,16 @@ namespace TenderAI.Api.Services
               "matches": [
                 {
                   "tenderId": "511680",
-                  "reason": "OKED 10710 and incoming bread-supply payments support this tender."
+                  "reason": "OKED 10710 and recent incoming bread-supply payments show relevant trading activity for this tender."
                 }
               ]
             }
-            Return an empty matches array when no tender qualifies. Each reason must be one short factual English
-            sentence of at most 25 words, based only on the supplied evidence. Return JSON only.
+            Return an empty matches array when no tender qualifies. Each reason must be a clear, factual English
+            explanation of up to 45 words, based only on the supplied evidence. State how both the activity and
+            incoming-payment evidence support the match. If relevant payment evidence contains non-English words,
+            quote only the shortest relevant original phrase and immediately follow it with its English translation
+            in parentheses, for example: payment for “поставка медицинских изделий” (“medical-device supply”).
+            Do not leave any other non-English text untranslated. Return JSON only.
             """;
 
         public static string Build(

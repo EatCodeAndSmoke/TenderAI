@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TenderAI.Api.Contracts;
@@ -168,8 +169,26 @@ namespace TenderAI.Api.Controllers
                 .Where(n => n.CustomerId == customerId)
                 .OrderByDescending(n => n.CreatedAt)
                 .ToListAsync(ct);
+            var tenderIds = notifications
+                .Select(notification => long.TryParse(notification.LotId, NumberStyles.None, CultureInfo.InvariantCulture, out var id)
+                    ? (long?)id
+                    : null)
+                .Where(id => id.HasValue)
+                .Select(id => id.GetValueOrDefault())
+                .Distinct()
+                .ToList();
+            var tenderSummaries = (await db.Tenders
+                .AsNoTracking()
+                .Where(tender => tenderIds.Contains(tender.Id))
+                .Select(tender => new { tender.Id, tender.Summary })
+                .ToListAsync(ct))
+                .ToDictionary(
+                    tender => tender.Id.ToString(CultureInfo.InvariantCulture),
+                    tender => tender.Summary);
 
-            return notifications.Select(n => n.ToDto()).ToList();
+            return notifications
+                .Select(notification => notification.ToDto(tenderSummaries.GetValueOrDefault(notification.LotId)))
+                .ToList();
         }
 
         private Task<CustomerEntity?> FindAsync(string customerId, CancellationToken ct, bool tracking)

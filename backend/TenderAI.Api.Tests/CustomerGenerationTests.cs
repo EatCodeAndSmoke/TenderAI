@@ -109,9 +109,10 @@ public class CustomerGenerationTests
         Assert.Empty(unmatched.Payments);
 
         var today = DateOnly.FromDateTime(DateTime.Today);
-        var financingEligible = matched.Where(customer => MeetsFinancingTerms(customer, today)).ToList();
-        var financingIneligible = matched.Where(customer => !MeetsFinancingTerms(customer, today)).ToList();
+        var financingEligible = matched.Where(customer => MeetsFinancingTerms(customer, today, 240_000_000)).ToList();
+        var financingIneligible = matched.Where(customer => !MeetsFinancingTerms(customer, today, 240_000_000)).ToList();
         Assert.Single(financingEligible);
+        Assert.True(financingEligible[0].RiskFeatures!.PreApprovedLimit is >= 192_000_000);
         var overdueCustomer = Assert.Single(financingIneligible);
         Assert.Equal(45, overdueCustomer.RiskFeatures!.MaxOverdueDays12m);
         Assert.True(overdueCustomer.RiskFeatures.OverdueAmount > 0);
@@ -308,6 +309,45 @@ public class CustomerGenerationTests
     }
 
     [Fact]
+    public async Task GenerateCreatesMedicalTenderCustomersWithRelevantPaymentsAndAnEightyPercentLimit()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<TenderAiDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var db = new TenderAiDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var tender = CreateTender(603, "The buyer is purchasing medical items for public hospitals.");
+        tender.Name = "PQ-20-sonli qaror doirasida tibbiy buyumlarni xarid qilish";
+        tender.StartPrice = 750_000_000;
+        tender.Products[0].ProductName = "tibbiy buyumlar";
+        tender.Products[0].CategoryName = "tibbiy buyumlar";
+        db.Tenders.Add(tender);
+        await db.SaveChangesAsync();
+
+        var response = await new CustomersController(db)
+            .Generate(new CustomerGenerationService(db, new FakeProfileGenerator()), CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(response.Result);
+        var generated = Assert.IsAssignableFrom<IEnumerable<CustomerRecordDto>>(ok.Value).ToList();
+        var matching = generated.Where(customer => !customer.OnRegister).ToList();
+        Assert.Equal(2, matching.Count);
+        Assert.All(matching, customer =>
+        {
+            Assert.Equal("46460", customer.Customer!.Industry!.IndustryCode);
+            Assert.NotNull(customer.RiskFeatures);
+            Assert.All(customer.RecentPayments.Where(payment => payment.IsIncoming), payment =>
+                Assert.Contains("medical", payment.PurposeDescription, StringComparison.OrdinalIgnoreCase));
+        });
+
+        var loanEligible = Assert.Single(matching, customer =>
+            customer.RiskFeatures!.OverdueAmount == 0
+            && customer.RiskFeatures.MaxOverdueDays12m == 0);
+        Assert.True(loanEligible.RiskFeatures!.PreApprovedLimit is >= 600_000_000);
+    }
+
+    [Fact]
     public async Task GenerateNormalizesCustomerIdsOutOfGeneratedNames()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
@@ -499,7 +539,7 @@ public class CustomerGenerationTests
         };
     }
 
-    private static bool MeetsFinancingTerms(CustomerEntity customer, DateOnly today)
+    private static bool MeetsFinancingTerms(CustomerEntity customer, DateOnly today, decimal tenderAmount)
     {
         var risk = customer.RiskFeatures!;
         return risk.KycPassed
@@ -507,7 +547,8 @@ public class CustomerGenerationTests
             && risk.MaxOverdueDays12m == 0
             && risk.OverdueAmount == 0
             && risk.AvgMonthlyInflow6m >= 80_000_000
-            && risk.PreApprovedLimit is > 0;
+            && risk.PreApprovedLimit is { } limit
+            && limit >= tenderAmount * 0.8m;
     }
 
     private static string IndustryDescriptionFor(string code) => code switch
