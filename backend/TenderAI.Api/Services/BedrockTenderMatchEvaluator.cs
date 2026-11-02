@@ -1,15 +1,26 @@
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using Amazon.BedrockRuntime;
 using Amazon.BedrockRuntime.Model;
+using Amazon.Runtime;
 using Microsoft.Extensions.Options;
 
 namespace TenderAI.Api.Services
 {
     public sealed class BedrockTenderMatchEvaluator(
         IAmazonBedrockRuntime bedrock,
-        IOptions<BedrockOptions> options) : ITenderMatchEvaluator
+        IOptions<BedrockOptions> options,
+        ILogger<BedrockTenderMatchEvaluator> logger) : ITenderMatchEvaluator
     {
+        private const int MaxInvocationAttempts = 4;
+        private static readonly HashSet<string> ThrottleErrorCodes = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "ThrottlingException",
+            "TooManyRequestsException"
+        };
+        private readonly SemaphoreSlim invocationGate = new(2, 2);
+
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
             PropertyNameCaseInsensitive = true
@@ -50,14 +61,7 @@ namespace TenderAI.Api.Services
                 }
             });
 
-            using var requestBodyStream = new MemoryStream(Encoding.UTF8.GetBytes(requestBody));
-            var response = await bedrock.InvokeModelAsync(new InvokeModelRequest
-            {
-                ModelId = options.Value.ModelId,
-                ContentType = "application/json",
-                Accept = "application/json",
-                Body = requestBodyStream
-            }, ct);
+            var response = await InvokeWithThrottleRetryAsync(requestBody, ct);
 
             JsonDocument responseJson;
             using (var responseBody = response.Body)
@@ -148,6 +152,46 @@ namespace TenderAI.Api.Services
 
             return result[(firstLineEnd + 1)..lastFence].Trim();
         }
+
+        private async Task<InvokeModelResponse> InvokeWithThrottleRetryAsync(string requestBody, CancellationToken ct)
+        {
+            for (var attempt = 1; ; attempt++)
+            {
+                await invocationGate.WaitAsync(ct);
+                try
+                {
+                    using var requestBodyStream = new MemoryStream(Encoding.UTF8.GetBytes(requestBody));
+                    return await bedrock.InvokeModelAsync(new InvokeModelRequest
+                    {
+                        ModelId = options.Value.ModelId,
+                        ContentType = "application/json",
+                        Accept = "application/json",
+                        Body = requestBodyStream
+                    }, ct);
+                }
+                catch (AmazonServiceException ex) when (IsThrottling(ex) && attempt < MaxInvocationAttempts)
+                {
+                    var delay = TimeSpan.FromMilliseconds(
+                        500 * (1 << (attempt - 1)) + Random.Shared.Next(0, 251));
+                    logger.LogWarning(
+                        ex,
+                        "Bedrock throttled a tender-match request; retrying attempt {Attempt} of {MaxAttempts} after {DelayMs} ms.",
+                        attempt + 1,
+                        MaxInvocationAttempts,
+                        delay.TotalMilliseconds);
+                    await Task.Delay(delay, ct);
+                }
+                finally
+                {
+                    invocationGate.Release();
+                }
+            }
+        }
+
+        private static bool IsThrottling(AmazonServiceException exception) =>
+            exception.StatusCode == HttpStatusCode.TooManyRequests
+            || (!string.IsNullOrWhiteSpace(exception.ErrorCode)
+                && ThrottleErrorCodes.Contains(exception.ErrorCode));
 
         private sealed class TenderMatchAssessmentDraft
         {

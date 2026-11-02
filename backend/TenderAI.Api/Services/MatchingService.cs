@@ -12,7 +12,7 @@ namespace TenderAI.Api.Services
         TimeProvider timeProvider)
     {
         private static readonly TimeSpan TashkentOffset = TimeSpan.FromHours(5);
-        private const int MaxConcurrentEvaluations = 4;
+        private const int MaxConcurrentEvaluations = 2;
 
         public async Task<IReadOnlyList<MatchDto>> RunAsync(CancellationToken ct)
         {
