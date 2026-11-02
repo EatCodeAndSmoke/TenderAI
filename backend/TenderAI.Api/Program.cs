@@ -27,6 +27,7 @@ builder.Services.AddHttpClient<UzexClient>((services, http) =>
     http.Timeout = TimeSpan.FromSeconds(uzex.TimeoutSeconds);
 });
 builder.Services.AddScoped<TenderImportService>();
+builder.Services.AddScoped<CustomerGenerationService>();
 builder.Services.AddScoped<MatchingService>();
 builder.Services.AddSingleton<ITenderMatchEvaluator, BedrockTenderMatchEvaluator>();
 builder.Services.AddSingleton(TimeProvider.System);
@@ -45,6 +46,7 @@ builder.Services.AddSingleton<IAmazonBedrockRuntime>(services =>
             RegionEndpoint = RegionEndpoint.GetBySystemName(region)
         });
 });
+builder.Services.AddSingleton<ICustomerProfileGenerator, BedrockCustomerProfileGenerator>();
 builder.Services.AddSingleton<ITenderSummarizer, BedrockTenderSummarizer>();
 builder.Services.AddSingleton<TenderSummaryService>();
 

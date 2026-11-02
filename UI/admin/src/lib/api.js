@@ -46,6 +46,8 @@ export const getCustomers = () => request('/customers');
 
 export const addCustomer = (record) => request('/customers', json('POST', record));
 
+export const generateCustomers = () => request('/customers/generate', { method: 'POST' });
+
 export const updateCustomer = (record) =>
   request(`/customers/${encodeURIComponent(record.customer.customerId)}`, json('PUT', record));
 

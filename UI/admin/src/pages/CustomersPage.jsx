@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { LANGUAGE_NAMES } from '../data/customers.js';
-import { clearCustomers, deleteCustomer, getCustomers } from '../lib/api.js';
+import { clearCustomers, deleteCustomer, generateCustomers, getCustomers } from '../lib/api.js';
 import { initials, money } from '../lib/format.js';
 import { BTN_PRIMARY, BTN_SECONDARY, CARD, ROW } from '../lib/styles.js';
 import { Chip, OverduePill } from '../components/badges.jsx';
-import { PlusIcon, SpinnerIcon, TrashIcon, XIcon } from '../components/icons.jsx';
+import { PlusIcon, SparklesIcon, SpinnerIcon, TrashIcon, XIcon } from '../components/icons.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import Modal from '../components/Modal.jsx';
 import CustomerForm from '../components/CustomerForm.jsx';
@@ -33,6 +33,7 @@ export default function CustomersPage({ onToast }) {
   const [loadError, setLoadError] = useState('');
   const [clearing, setClearing] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
+  const [generating, setGenerating] = useState(false);
 
   // record = null opens an empty "Add customer" form; a record opens its details.
   // formKey changes on every open so the form starts fresh.
@@ -90,6 +91,27 @@ export default function CustomersPage({ onToast }) {
     }
   };
 
+  const handleGenerate = async () => {
+    setGenerating(true);
+    try {
+      const saved = await generateCustomers();
+      if (!Array.isArray(saved) || saved.length !== 3) {
+        throw new Error('The server did not confirm that all 3 customers were saved.');
+      }
+
+      try {
+        setCustomers(await getCustomers());
+        onToast('Generated and saved 3 demo customers from the existing tender summaries.');
+      } catch (err) {
+        window.alert(`The server saved 3 customers, but the list could not be refreshed: ${err.message}`);
+      }
+    } catch (err) {
+      window.alert(err.message);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   const n = customers.length;
   const summary = status === 'loading'
     ? 'Loading customers…'
@@ -105,15 +127,23 @@ export default function CustomersPage({ onToast }) {
             <button
               type="button"
               onClick={handleClear}
-              disabled={status !== 'ready' || n === 0 || clearing}
+              disabled={status !== 'ready' || n === 0 || clearing || generating}
               className={`${BTN_SECONDARY} cursor-pointer disabled:cursor-not-allowed disabled:opacity-50`}
             >
               <XIcon /> Clear
             </button>
             <button
               type="button"
+              onClick={handleGenerate}
+              disabled={status !== 'ready' || generating}
+              className={`${BTN_SECONDARY} disabled:cursor-wait disabled:opacity-50`}
+            >
+              {generating ? <><SpinnerIcon /> Generating…</> : <><SparklesIcon /> Generate Random Customers</>}
+            </button>
+            <button
+              type="button"
               onClick={() => openDialog()}
-              disabled={status !== 'ready'}
+              disabled={status !== 'ready' || generating}
               className={`${BTN_PRIMARY} disabled:opacity-50`}
             >
               <PlusIcon /> Add customer
@@ -183,6 +213,7 @@ export default function CustomersPage({ onToast }) {
                         <button
                           type="button"
                           onClick={() => openDialog(record)}
+                          disabled={generating}
                           aria-label={`Details for ${c.name}`}
                           className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-brand-700 ring-1 ring-line ring-inset transition-colors hover:bg-brand-50 hover:ring-brand-300 disabled:cursor-wait disabled:opacity-50"
                         >
@@ -191,7 +222,7 @@ export default function CustomersPage({ onToast }) {
                         <button
                           type="button"
                           onClick={() => handleDelete(c)}
-                          disabled={deletingId === c.customerId}
+                          disabled={deletingId === c.customerId || generating}
                           title="Delete"
                           aria-label={`Delete ${c.name}`}
                           className="grid size-8 place-items-center rounded-lg text-muted transition-colors hover:bg-red-50 hover:text-red-600 disabled:cursor-wait disabled:opacity-50"

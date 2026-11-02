@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using TenderAI.Api.Contracts;
 using TenderAI.Api.Data;
 using TenderAI.Api.Data.Entities;
+using TenderAI.Api.Services;
 
 namespace TenderAI.Api.Controllers
 {
@@ -58,6 +59,26 @@ namespace TenderAI.Api.Controllers
             await db.SaveChangesAsync(ct);
 
             return CreatedAtAction(nameof(Get), new { customerId }, customer.ToDto(Today));
+        }
+
+        // POST api/customers/generate
+        [HttpPost("generate")]
+        public async Task<ActionResult<IEnumerable<CustomerRecordDto>>> Generate(
+            [FromServices] CustomerGenerationService generator,
+            CancellationToken ct)
+        {
+            try
+            {
+                return Ok(await generator.GenerateAsync(ct));
+            }
+            catch (NoAvailableTenderSummaryException ex)
+            {
+                return Problem(statusCode: StatusCodes.Status400BadRequest, title: ex.Message);
+            }
+            catch (CustomerProfileGenerationException ex)
+            {
+                return Problem(statusCode: StatusCodes.Status502BadGateway, title: ex.Message);
+            }
         }
 
         // PUT api/customers/C-01
