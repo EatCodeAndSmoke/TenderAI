@@ -85,14 +85,41 @@ namespace TenderAI.Api.Services
                         timestamp))
                     .ToList();
 
-                await using (var transaction = await db.Database.BeginTransactionAsync(ct))
+                Exception? persistenceError = null;
+                try
                 {
+                    await using var transaction = await db.Database.BeginTransactionAsync(ct);
                     await db.Notifications
                         .Where(notification => notification.CustomerId == evaluation.Customer.CustomerId)
                         .ExecuteDeleteAsync(ct);
                     db.Notifications.AddRange(notifications);
                     await db.SaveChangesAsync(ct);
                     await transaction.CommitAsync(ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    failedCount++;
+                    logger.LogError(ex, "Saving matching results failed for customer {CustomerId}.", evaluation.Customer.CustomerId);
+                    db.ChangeTracker.Clear();
+                    persistenceError = ex;
+                }
+
+                if (persistenceError is not null)
+                {
+                    yield return new MatchRunEvent(
+                        "customer-error",
+                        TotalCustomers: customers.Count,
+                        TotalTenders: tenders.Count,
+                        CompletedCustomers: completedCount,
+                        FailedCustomers: failedCount,
+                        CustomerId: evaluation.Customer.CustomerId,
+                        CustomerName: evaluation.Customer.Name,
+                        Error: "The result could not be saved; this customer's previous results were kept.");
+                    continue;
                 }
 
                 var matchDtos = notifications

@@ -74,7 +74,7 @@ namespace TenderAI.Api.Controllers
                 }
 
                 await Response.WriteAsync(
-                    $"data: {JsonSerializer.Serialize(new { type = "error", message = "The matching run stopped unexpectedly. Results already saved for completed customers were kept." }, EventJsonOptions)}\n\n",
+                    $"data: {JsonSerializer.Serialize(new { type = "error", message = $"Matching stopped: {ex.GetBaseException().Message} Results already saved for completed customers were kept." }, EventJsonOptions)}\n\n",
                     ct);
                 await Response.Body.FlushAsync(ct);
             }

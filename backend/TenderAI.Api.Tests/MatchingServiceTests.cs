@@ -161,6 +161,67 @@ public class MatchingServiceTests
     }
 
     [Fact]
+    public async Task RunContinuesWhenOneCustomersResultCannotBeSaved()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<TenderAiDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var db = new TenderAiDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.AddRange(
+            CreateCustomer("C-01", preApprovedLimit: 80_000_000),
+            CreateCustomer("C-02", preApprovedLimit: 80_000_000));
+        db.Tenders.Add(CreateTender());
+        db.Notifications.Add(new NotificationEntity
+        {
+            Id = "N-OLD",
+            CustomerId = "C-01",
+            LotId = "old-lot",
+            CreatedAt = DateTime.UtcNow,
+            Title = "Previous result",
+            Body = "Previous tender notice",
+            Buyer = "Existing buyer",
+            SourceUrl = "https://uzex.test/lot/old-lot",
+            Region = "Tashkent",
+            StartPrice = 1_000_000,
+            CurrencyCode = "UZS",
+            Deadline = new DateOnly(2026, 11, 30),
+            MatchReason = "Previous match reason",
+            LoanDecisionReason = "Previous loan decision"
+        });
+        await db.SaveChangesAsync();
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE TRIGGER reject_customer_one_notification
+            BEFORE INSERT ON Notifications
+            WHEN NEW.CustomerId = 'C-01'
+            BEGIN
+                SELECT RAISE(FAIL, 'test-only notification failure');
+            END;
+            """);
+
+        var evaluator = new FakeMatchEvaluator(
+            [new TenderCandidateMatch("511680", "OKED 10710 and incoming bread payments support this tender.")]);
+        var events = await CollectEvents(CreateService(db, evaluator));
+
+        Assert.Contains(events, runEvent => runEvent.Type == "customer-error"
+            && runEvent.CustomerId == "C-01"
+            && runEvent.Error!.Contains("could not be saved", StringComparison.Ordinal));
+        Assert.Contains(events, runEvent => runEvent.Type == "customer-completed"
+            && runEvent.CustomerId == "C-02");
+        Assert.Contains(events, runEvent => runEvent.Type == "completed" && runEvent.FailedCustomers == 1);
+        Assert.Equal("Previous result", await db.Notifications
+            .Where(notification => notification.CustomerId == "C-01")
+            .Select(notification => notification.Title)
+            .SingleAsync());
+        Assert.Equal("C-02", await db.Notifications
+            .Where(notification => notification.CustomerId == "C-02")
+            .Select(notification => notification.CustomerId)
+            .SingleAsync());
+    }
+
+    [Fact]
     public async Task StreamingEndpointFlushesCustomerResultsAsServerSentEvents()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

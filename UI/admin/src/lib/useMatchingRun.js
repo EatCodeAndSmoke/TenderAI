@@ -26,7 +26,7 @@ export function useMatchingRun() {
     setStatus('running');
     setError('');
     setProgress({ completed: 0, total: 0, failed: 0 });
-    let failedCount = 0;
+    const failedCustomers = [];
     try {
       await runMatching((event) => {
         if (event.type === 'started') {
@@ -42,7 +42,7 @@ export function useMatchingRun() {
             failed: event.failedCustomers
           });
         } else if (event.type === 'customer-error') {
-          failedCount += 1;
+          failedCustomers.push(`${event.customerName || event.customerId}: ${event.error || 'evaluation failed'}`);
           setProgress({
             completed: event.completedCustomers,
             total: event.totalCustomers,
@@ -51,8 +51,10 @@ export function useMatchingRun() {
         }
       });
       setStartedAt(new Date());
-      if (failedCount > 0) {
-        setError(`${failedCount} customer ${failedCount === 1 ? 'evaluation failed' : 'evaluations failed'}. Previous results for those customers were kept.`);
+      if (failedCustomers.length > 0) {
+        const shownFailures = failedCustomers.slice(0, 3).join(' ');
+        const remainder = failedCustomers.length > 3 ? ` ${failedCustomers.length - 3} more failed.` : '';
+        setError(`${failedCustomers.length} customer ${failedCustomers.length === 1 ? 'evaluation failed.' : 'evaluations failed.'} ${shownFailures}${remainder}`);
       }
       setStatus('ready');
     } catch (err) {
