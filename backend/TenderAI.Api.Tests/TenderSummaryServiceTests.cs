@@ -404,6 +404,29 @@ public class TenderSummaryServiceTests
         Assert.All(loaded, tender => Assert.Equal($"Summary {tender.Id}", tender.Summary));
     }
 
+    [Fact]
+    public async Task ImportStreamsAndPersistsEachTenderBeforeFetchingTheNext()
+    {
+        await using var db = await CreateDatabaseAsync();
+        var handler = new TenderApiHandler(3);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://uzex.test/") };
+        var summaryService = new TenderSummaryService(
+            new DelegateSummarizer((tender, _) => Task.FromResult($"Summary {tender.Id}")),
+            NullLogger<TenderSummaryService>.Instance);
+        var importer = new TenderImportService(db, new UzexClient(http), summaryService,
+            Options.Create(new UzexOptions { ApiBaseUrl = "https://uzex.test/", LotUrl = "https://uzex.test/lot/{0}" }),
+            NullLogger<TenderImportService>.Instance);
+
+        await using var stream = importer.LoadNewStreamingAsync(3, CancellationToken.None).GetAsyncEnumerator();
+        Assert.True(await stream.MoveNextAsync());
+        Assert.Equal(1, handler.DetailsRequested);
+        Assert.Equal(1, await db.Tenders.CountAsync());
+        Assert.Equal("Summary 1", stream.Current.Summary);
+        Assert.True(await stream.MoveNextAsync());
+        Assert.Equal(2, handler.DetailsRequested);
+        Assert.Equal(2, await db.Tenders.CountAsync());
+    }
+
     private static TenderEntity CreateTender(long id = 1) => new()
     {
         Id = id,
@@ -550,7 +573,7 @@ public class DatabaseSchemaTests
         using var verify = connection.CreateCommand();
         verify.CommandText = """
             SELECT "Id", "Name", "TranslationError", "Summary", "SummaryVersion", "SummaryError",
-                "DetailedName", "AdditionalDescription", "HasUnparsedTechnicalDocuments", "BuyerRequirements"
+                "DetailedName", "AdditionalDescription", "HasUnparsedTechnicalDocuments", "BuyerRequirements", "EnglishTitle"
             FROM "Tenders"
             WHERE "Id" = 42;
             """;
@@ -566,6 +589,7 @@ public class DatabaseSchemaTests
         Assert.True(reader.IsDBNull(7));
         Assert.True(reader.IsDBNull(8));
         Assert.Equal("[]", reader.GetString(9));
+        Assert.True(reader.IsDBNull(10));
 
         using var products = connection.CreateCommand();
         products.CommandText = "SELECT \"TechnicalSpecifications\" FROM \"TenderProducts\" LIMIT 0;";

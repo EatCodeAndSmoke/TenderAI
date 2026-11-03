@@ -41,11 +41,11 @@ namespace TenderAI.Api.Controllers
             var tenderSummaries = (await db.Tenders
                 .AsNoTracking()
                 .Where(tender => tenderIds.Contains(tender.Id))
-                .Select(tender => new { tender.Id, tender.Summary })
+                .Select(tender => new { tender.Id, Title = tender.EnglishTitle ?? tender.Summary })
                 .ToListAsync(ct))
                 .ToDictionary(
                     tender => tender.Id.ToString(CultureInfo.InvariantCulture),
-                    tender => tender.Summary);
+                    tender => tender.Title);
 
             return notifications
                 .Where(notification => customerNames.ContainsKey(notification.CustomerId))
@@ -56,7 +56,21 @@ namespace TenderAI.Api.Controllers
         }
 
         [HttpPost("run/stream")]
-        public async Task RunStreaming(CancellationToken ct)
+        public Task RunStreaming(CancellationToken ct) => RunCore(null, ct);
+
+        [HttpPost("/api/customers/{customerId}/matches/stream")]
+        public async Task RunCustomerStreaming(string customerId, CancellationToken ct)
+        {
+            customerId = customerId.Trim().ToUpperInvariant();
+            if (!await db.Customers.AnyAsync(c => c.CustomerId == customerId, ct))
+            {
+                Response.StatusCode = StatusCodes.Status404NotFound;
+                return;
+            }
+            await RunCore(customerId, ct);
+        }
+
+        private async Task RunCore(string? customerId, CancellationToken ct)
         {
             Response.ContentType = "text/event-stream";
             Response.Headers.CacheControl = "no-cache, no-store";
@@ -65,7 +79,7 @@ namespace TenderAI.Api.Controllers
 
             try
             {
-                await foreach (var runEvent in matchingService.RunStreamingAsync(ct))
+                await foreach (var runEvent in matchingService.RunStreamingAsync(ct, customerId))
                 {
                     await Response.WriteAsync(
                         $"data: {JsonSerializer.Serialize(runEvent, EventJsonOptions)}\n\n",

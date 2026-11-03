@@ -42,6 +42,7 @@ namespace TenderAI.Api.Data
             try
             {
                 AddColumnIfMissing(db, connection, "Tenders", "Summary");
+                AddColumnIfMissing(db, connection, "Tenders", "EnglishTitle");
                 AddColumnIfMissing(db, connection, "Tenders", "SummaryVersion");
                 AddColumnIfMissing(db, connection, "Tenders", "SummaryError");
                 AddColumnIfMissing(db, connection, "Tenders", "DetailedName");
@@ -88,6 +89,7 @@ namespace TenderAI.Api.Data
                 }
 
                 db.Notifications.Where(notification => ids.Contains(notification.CustomerId)).ExecuteDelete();
+                db.CustomerAccounts.Where(account => ids.Contains(account.CustomerId)).ExecuteDelete();
                 db.CustomerPayments.Where(payment => ids.Contains(payment.CustomerId)).ExecuteDelete();
                 db.CustomerRiskFeatures.Where(risk => ids.Contains(risk.CustomerId)).ExecuteDelete();
                 db.Customers.Where(customer => ids.Contains(customer.CustomerId)).ExecuteDelete();
@@ -127,6 +129,7 @@ namespace TenderAI.Api.Data
                 var sql = (table, column) switch
                 {
                     ("Tenders", "Summary") => "ALTER TABLE \"Tenders\" ADD COLUMN \"Summary\" TEXT NULL",
+                    ("Tenders", "EnglishTitle") => "ALTER TABLE \"Tenders\" ADD COLUMN \"EnglishTitle\" TEXT NULL",
                     ("Tenders", "SummaryVersion") => "ALTER TABLE \"Tenders\" ADD COLUMN \"SummaryVersion\" INTEGER NULL",
                     ("Tenders", "SummaryError") => "ALTER TABLE \"Tenders\" ADD COLUMN \"SummaryError\" TEXT NULL",
                     ("Tenders", "DetailedName") => "ALTER TABLE \"Tenders\" ADD COLUMN \"DetailedName\" TEXT NULL",

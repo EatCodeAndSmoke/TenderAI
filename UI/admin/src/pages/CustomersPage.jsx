@@ -1,253 +1,72 @@
 import { useCallback, useEffect, useState } from 'react';
-import { LANGUAGE_NAMES } from '../data/customers.js';
-import { clearCustomers, deleteCustomer, generateCustomers, getCustomers } from '../lib/api.js';
-import { initials, money } from '../lib/format.js';
-import { BTN_PRIMARY, BTN_SECONDARY, CARD, ROW } from '../lib/styles.js';
-import { Chip, OverduePill } from '../components/badges.jsx';
-import { PlusIcon, SparklesIcon, SpinnerIcon, TrashIcon, XIcon } from '../components/icons.jsx';
+import { clearCustomers, deleteCustomer, generateCustomer, getCustomers } from '../lib/api.js';
+import { BTN_PRIMARY, BTN_SECONDARY, CARD } from '../lib/styles.js';
 import PageHeader from '../components/PageHeader.jsx';
-import Modal from '../components/Modal.jsx';
-import CustomerForm from '../components/CustomerForm.jsx';
-
-const HEADERS = [
-  ['Company', 'px-3.5'],
-  ['Activity', 'px-3.5'],
-  ['Location', 'px-3.5'],
-  ['Language', 'px-3.5'],
-  ["Monthly inflow, so'm", 'px-4 text-right'],
-  ['Overdue, 12 months', 'px-3.5'],
-  ["Pre-approved limit, so'm", 'px-4 text-right']
-];
-
-const byId = (a, b) => a.customer.customerId.localeCompare(b.customer.customerId);
-
-// Suggested ID for a new customer: one more than the highest number in use (C-07 -> C-08)
-function nextCustomerId(customers) {
-  const max = Math.max(0, ...customers.map((c) => Number(c.customer.customerId.replace(/\D/g, '')) || 0));
-  return `C-${String(max + 1).padStart(2, '0')}`;
-}
 
 export default function CustomersPage({ onToast }) {
   const [customers, setCustomers] = useState([]);
-  const [status, setStatus] = useState('loading');
-  const [loadError, setLoadError] = useState('');
-  const [clearing, setClearing] = useState(false);
-  const [deletingId, setDeletingId] = useState(null);
-  const [generating, setGenerating] = useState(false);
-
-  // record = null opens an empty "Add customer" form; a record opens its details.
-  // formKey changes on every open so the form starts fresh.
-  const [dialog, setDialog] = useState({ open: false, record: null, formKey: 0 });
-  const openDialog = (record = null) => setDialog((d) => ({ open: true, record, formKey: d.formKey + 1 }));
-  const closeDialog = () => setDialog((d) => ({ ...d, open: false }));
-
+  const [scenario, setScenario] = useState('offer');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [selected, setSelected] = useState(null);
   const load = useCallback(async () => {
-    setStatus('loading');
-    try {
-      setCustomers(await getCustomers());
-      setStatus('ready');
-    } catch (err) {
-      setLoadError(err.message);
-      setStatus('error');
-    }
+    try { setCustomers(await getCustomers()); setError(''); }
+    catch (err) { setError(err.message); }
   }, []);
-
   useEffect(() => { load(); }, [load]);
 
-  // Put the saved record in the list (new or updated) without reloading everything
-  const handleSaved = (message, saved) => {
-    setCustomers((prev) => [...prev.filter((c) => c.customer.customerId !== saved.customer.customerId), saved].sort(byId));
-    closeDialog();
-    onToast(message);
-  };
-
-  const handleDelete = async ({ customerId, name }) => {
-    if (!window.confirm(`Delete ${name} (${customerId})? Their payments and notifications are removed too. This can't be undone.`)) return;
-    setDeletingId(customerId);
+  async function generate() {
+    setBusy(true); setError('');
     try {
-      await deleteCustomer(customerId);
-      setCustomers((prev) => prev.filter((c) => c.customer.customerId !== customerId));
-      onToast(`${name} deleted.`);
-    } catch (err) {
-      // Already gone on the server: drop it from the list as well
-      if (err.status === 404) setCustomers((prev) => prev.filter((c) => c.customer.customerId !== customerId));
-      window.alert(err.status === 404 ? `${name} was already deleted.` : err.message);
-    } finally {
-      setDeletingId(null);
-    }
-  };
-
-  const handleClear = async () => {
-    if (!window.confirm('Remove all customers? Their payments and notifications are removed too. This can\'t be undone.')) return;
-    setClearing(true);
-    try {
-      await clearCustomers();
-      setCustomers([]);
-      onToast('All customers removed.');
-    } catch (err) {
-      window.alert(err.message);
-    } finally {
-      setClearing(false);
-    }
-  };
-
-  const handleGenerate = async () => {
-    setGenerating(true);
-    try {
-      const saved = await generateCustomers();
-      if (!Array.isArray(saved) || saved.length !== 3) {
-        throw new Error('The server did not confirm that all 3 customers were saved.');
-      }
-
-      try {
-        setCustomers(await getCustomers());
-        onToast('Generated and saved 3 demo customers from the existing tender summaries.');
-      } catch (err) {
-        window.alert(`The server saved 3 customers, but the list could not be refreshed: ${err.message}`);
-      }
-    } catch (err) {
-      window.alert(err.message);
-    } finally {
-      setGenerating(false);
-    }
-  };
-
-  const n = customers.length;
-  const summary = status === 'loading'
-    ? 'Loading customers…'
-    : `${n} business ${n === 1 ? 'customer' : 'customers'} from the database. Start matching to compare OKED activity and incoming payments with open tenders.`;
-
+      const saved = await generateCustomer(scenario);
+      if (!Array.isArray(saved) || saved.length !== 1) throw new Error('The server did not confirm one customer was created.');
+      setCustomers(prev => [...prev, saved[0]].sort((a, b) => a.customer.customerId.localeCompare(b.customer.customerId)));
+      onToast('Demo customer created.');
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+  async function remove(id) {
+    if (!window.confirm(`Delete ${id} and its demo data?`)) return;
+    setBusy(true);
+    try { await deleteCustomer(id); setCustomers(prev => prev.filter(c => c.customer.customerId !== id)); setSelected(null); }
+    catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+  async function clear() {
+    if (!window.confirm('Delete all customers and their demo data?')) return;
+    setBusy(true);
+    try { await clearCustomers(); setCustomers([]); setSelected(null); }
+    catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
   return (
     <section>
-      <PageHeader
-        title="Customers"
-        summary={summary}
-        actions={
-          <>
-            <button
-              type="button"
-              onClick={handleClear}
-              disabled={status !== 'ready' || n === 0 || clearing || generating}
-              className={`${BTN_SECONDARY} cursor-pointer disabled:cursor-not-allowed disabled:opacity-50`}
-            >
-              <XIcon /> Clear
-            </button>
-            <button
-              type="button"
-              onClick={handleGenerate}
-              disabled={status !== 'ready' || generating}
-              className={`${BTN_SECONDARY} disabled:cursor-wait disabled:opacity-50`}
-            >
-              {generating ? <><SpinnerIcon /> Generating…</> : <><SparklesIcon /> Generate Random Customers</>}
-            </button>
-            <button
-              type="button"
-              onClick={() => openDialog()}
-              disabled={status !== 'ready' || generating}
-              className={`${BTN_PRIMARY} disabled:opacity-50`}
-            >
-              <PlusIcon /> Add customer
-            </button>
-          </>
-        }
-      />
-
-      <div className={CARD}>
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead className="bg-subtle text-left text-xs text-muted">
-              <tr className="border-b border-line">
-                {HEADERS.map(([label, cls]) => <th key={label} className={`${cls} py-3 font-medium`}>{label}</th>)}
-                <th className="px-3.5 py-3"><span className="sr-only">Actions</span></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {status !== 'ready' && (
-                <tr>
-                  <td colSpan={HEADERS.length + 1} className="px-4 py-10 text-center text-sm text-muted">
-                    {status === 'loading' ? 'Loading customers…' : (
-                      <>
-                        <span className="text-red-700">{loadError}</span>{' '}
-                        <button type="button" onClick={load} className="font-medium text-brand-700 hover:underline">Try again</button>
-                      </>
-                    )}
-                  </td>
-                </tr>
-              )}
-              {status === 'ready' && n === 0 && (
-                <tr>
-                  <td colSpan={HEADERS.length + 1} className="px-4 py-10 text-center text-sm text-muted">
-                    No customers yet. Add one to get started.
-                  </td>
-                </tr>
-              )}
-              {status === 'ready' && customers.map((record) => {
-                const { customer: c, riskFeatures: r } = record;
-                return (
-                  <tr key={c.customerId} className={ROW}>
-                    <td className="px-3.5 py-4">
-                      <div className="flex items-center gap-3">
-                        <span className="grid size-9 shrink-0 place-items-center rounded-full bg-brand-50 text-xs font-semibold text-brand-700">{initials(c.name)}</span>
-                        <div className="min-w-0">
-                          <div className="font-medium">{c.name}</div>
-                          <div className="text-xs whitespace-nowrap text-muted">{c.customerId}, TIN {c.taxCode}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-3.5 py-4">
-                      <div>{c.industry.name}</div>
-                      <div className="text-xs text-muted">OKED {c.industry.industryCode}</div>
-                    </td>
-                    <td className="px-3.5 py-4">
-                      <div>{c.address.regionName}</div>
-                      <div className="text-xs text-muted">{c.address.districtName}</div>
-                    </td>
-                    <td className="px-3.5 py-4"><Chip>{LANGUAGE_NAMES[c.languageCode] || c.languageCode}</Chip></td>
-                    <td className="px-3.5 py-4 text-right whitespace-nowrap tabular-nums">{money(r.avgMonthlyInflow6m)}</td>
-                    <td className="px-3.5 py-4"><OverduePill days={r.maxOverdueDays12m} /></td>
-                    <td className="px-3.5 py-4 text-right whitespace-nowrap tabular-nums">
-                      {r.preApprovedLimit ? money(r.preApprovedLimit) : <span className="text-muted">None</span>}
-                    </td>
-                    <td className="px-3 py-4">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          type="button"
-                          onClick={() => openDialog(record)}
-                          disabled={generating}
-                          aria-label={`Details for ${c.name}`}
-                          className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-brand-700 ring-1 ring-line ring-inset transition-colors hover:bg-brand-50 hover:ring-brand-300 disabled:cursor-wait disabled:opacity-50"
-                        >
-                          Details
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(c)}
-                          disabled={deletingId === c.customerId || generating}
-                          title="Delete"
-                          aria-label={`Delete ${c.name}`}
-                          className="grid size-8 place-items-center rounded-lg text-muted transition-colors hover:bg-red-50 hover:text-red-600 disabled:cursor-wait disabled:opacity-50"
-                        >
-                          <TrashIcon />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+      <PageHeader title="Customers" summary="Create one fictional business for the selected demo scenario. If needed, open tenders are loaded from UZEX first." />
+      <div className={`${CARD} mb-6 p-5`}>
+        <label htmlFor="scenario" className="block text-sm font-semibold">Demo scenario</label>
+        <div className="mt-2 flex flex-wrap gap-3">
+          <select id="scenario" value={scenario} onChange={e => setScenario(e.target.value)} disabled={busy} className="rounded-lg border border-line bg-white px-3 py-2 text-sm">
+            <option value="offer">Matching tenders + loan offer</option>
+            <option value="match">Matching tenders, no loan offer</option>
+            <option value="none">No matching tenders</option>
+          </select>
+          <button type="button" className={BTN_PRIMARY} disabled={busy} onClick={generate}>{busy ? 'Working…' : 'Generate customer'}</button>
+          <button type="button" className={BTN_SECONDARY} disabled={busy || !customers.length} onClick={clear}>Delete all</button>
         </div>
+        <p className="mt-3 text-xs text-muted">Matches are evaluated by AI against the open tender list; actual results depend on the available tenders and the evaluation.</p>
       </div>
-
-      <Modal open={dialog.open} onClose={closeDialog} labelledBy="dialog-title" dismissOnBackdrop={false}>
-        <CustomerForm
-          key={dialog.formKey}
-          record={dialog.record}
-          defaultCustomerId={nextCustomerId(customers)}
-          onCancel={closeDialog}
-          onSaved={handleSaved}
-        />
-      </Modal>
+      {error && <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error} <button onClick={load} className="underline">Reload list</button></p>}
+      <div className={`${CARD} overflow-x-auto`}>
+        <table className="w-full text-left text-sm">
+          <thead className="bg-subtle text-xs text-muted"><tr><th className="p-4">Customer</th><th className="p-4">Activity</th><th className="p-4">Location</th><th className="p-4">Actions</th></tr></thead>
+          <tbody>{customers.map(record => {
+            const c = record.customer;
+            return <tr key={c.customerId} className="border-t border-line"><td className="p-4"><strong>{c.name}</strong><div className="text-xs text-muted">{c.customerId} · TIN {c.taxCode}</div></td><td className="p-4">{c.industry.name}<div className="text-xs text-muted">OKED {c.industry.industryCode}</div></td><td className="p-4">{c.address.regionName}</td><td className="p-4 whitespace-nowrap"><button className="mr-3 text-brand-700 underline" onClick={() => setSelected(selected === record ? null : record)}>Details</button><button disabled={busy} className="text-red-700 underline" onClick={() => remove(c.customerId)}>Delete</button></td></tr>;
+          })}</tbody>
+        </table>
+        {!customers.length && <p className="p-6 text-center text-sm text-muted">No customers yet.</p>}
+      </div>
+      {selected && <div className={`${CARD} mt-4 p-5`}><h2 className="font-semibold">{selected.customer.name}</h2><pre className="mt-3 overflow-x-auto text-xs">{JSON.stringify(selected, null, 2)}</pre></div>}
     </section>
   );
 }

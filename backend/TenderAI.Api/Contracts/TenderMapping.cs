@@ -9,6 +9,7 @@ namespace TenderAI.Api.Contracts
             t.DisplayNo,
             t.Source,
             t.SourceUrl,
+            t.EnglishTitle,
             t.Summary,
             t.SummaryError,
             t.StartPrice,

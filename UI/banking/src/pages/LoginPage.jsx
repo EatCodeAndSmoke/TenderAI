@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { authenticate, getNotifications } from '../api.js';
+import { authenticate } from '../api.js';
 import { useSession } from '../session.jsx';
 import { LogoIcon } from '../components/icons.jsx';
 
@@ -30,9 +30,7 @@ export default function LoginPage() {
     setError('');
     try {
       const customer = await authenticate(id, password);
-      // Load notifications before opening home, so the bell shows the right count straight away
-      const notifications = await getNotifications(customer.customerId);
-      login(customer, notifications);
+      login(customer);
       navigate('/home');
     } catch (err) {
       setError(err.status === 401

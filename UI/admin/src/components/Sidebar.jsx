@@ -1,11 +1,4 @@
-import { NavLink } from 'react-router-dom';
-import { BuildingIcon, DocIcon, LinkIcon, LogoIcon } from './icons.jsx';
-
-const NAV = [
-  { to: '/tenders', label: 'Tenders', Icon: DocIcon },
-  { to: '/customers', label: 'Customers', Icon: BuildingIcon },
-  { to: '/matches', label: 'Matches', Icon: LinkIcon }
-];
+import { BuildingIcon, LogoIcon } from './icons.jsx';
 
 // Sidebar (top bar on small screens). The page you're on gets a white highlight.
 export default function Sidebar() {
@@ -22,22 +15,9 @@ export default function Sidebar() {
       </div>
 
       <nav className="flex gap-1 md:mt-10 md:flex-col" aria-label="Main">
-        {NAV.map(({ to, label, Icon }) => (
-          <NavLink
-            key={to}
-            to={to}
-            className={({ isActive }) =>
-              'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ' +
-              (isActive ? 'bg-white text-cobalt shadow-sm' : 'text-cobalt-soft hover:bg-white/10 hover:text-white')}
-          >
-            {({ isActive }) => (
-              <>
-                <Icon className={`size-5 shrink-0 ${isActive ? 'text-brand-600' : ''}`} />
-                {label}
-              </>
-            )}
-          </NavLink>
-        ))}
+        <span className="flex items-center gap-3 rounded-lg bg-white px-3 py-2.5 text-sm font-medium text-cobalt shadow-sm">
+          <BuildingIcon className="size-5 text-brand-600" /> Customers
+        </span>
       </nav>
 
       <p className="mt-auto hidden px-3 text-xs leading-relaxed text-cobalt-soft md:block">
