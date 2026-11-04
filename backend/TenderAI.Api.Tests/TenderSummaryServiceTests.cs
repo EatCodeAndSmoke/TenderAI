@@ -573,7 +573,7 @@ public class DatabaseSchemaTests
         using var verify = connection.CreateCommand();
         verify.CommandText = """
             SELECT "Id", "Name", "TranslationError", "Summary", "SummaryVersion", "SummaryError",
-                "DetailedName", "AdditionalDescription", "HasUnparsedTechnicalDocuments", "BuyerRequirements", "EnglishTitle"
+                "DetailedName", "AdditionalDescription", "HasUnparsedTechnicalDocuments", "BuyerRequirements", "EnglishTitle", "IsDeleted"
             FROM "Tenders"
             WHERE "Id" = 42;
             """;
@@ -590,6 +590,7 @@ public class DatabaseSchemaTests
         Assert.True(reader.IsDBNull(8));
         Assert.Equal("[]", reader.GetString(9));
         Assert.True(reader.IsDBNull(10));
+        Assert.Equal(0L, reader.GetInt64(11));
 
         using var products = connection.CreateCommand();
         products.CommandText = "SELECT \"TechnicalSpecifications\" FROM \"TenderProducts\" LIMIT 0;";

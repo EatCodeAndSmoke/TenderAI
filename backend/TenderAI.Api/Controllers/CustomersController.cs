@@ -79,7 +79,7 @@ namespace TenderAI.Api.Controllers
             try
             {
                 if (scenario is not null && importer is not null
-                    && !await db.Tenders.AnyAsync(t => t.EndDate >= DateTime.UtcNow.AddHours(5), ct))
+                    && !await db.Tenders.AnyAsync(t => !t.IsDeleted && t.EndDate >= DateTime.UtcNow.AddHours(5), ct))
                     await importer.LoadNewAsync(TenderImportService.MaxTendersPerLoad, ct);
                 else if (scenario is not null && summaries is not null)
                     await summaries.SummarizeMissingTendersAsync(db, ct);
@@ -90,9 +90,9 @@ namespace TenderAI.Api.Controllers
                 catch (NoAvailableTenderSummaryException) when (scenario is not null && importer is not null)
                 {
                     var now = DateTime.UtcNow.AddHours(5);
-                    if (!await db.Tenders.AnyAsync(t => t.EndDate >= now && t.Summary != null && t.Summary != ""
+                    if (!await db.Tenders.AnyAsync(t => !t.IsDeleted && t.EndDate >= now && t.Summary != null && t.Summary != ""
                             && t.EnglishTitle != null && t.EnglishTitle != "", ct)
-                        && await db.Tenders.AnyAsync(t => t.EndDate >= now && t.SummaryError != null, ct))
+                        && await db.Tenders.AnyAsync(t => !t.IsDeleted && t.EndDate >= now && t.SummaryError != null, ct))
                         throw;
                     await importer.LoadNewAsync(TenderImportService.MaxTendersPerLoad, ct);
                     return Ok(await generator.GenerateAsync(scenario, ct, matching));
@@ -101,9 +101,9 @@ namespace TenderAI.Api.Controllers
             catch (NoAvailableTenderSummaryException ex)
             {
                 var now = DateTime.UtcNow.AddHours(5);
-                if (!await db.Tenders.AnyAsync(t => t.EndDate >= now && t.Summary != null && t.Summary != ""
+                if (!await db.Tenders.AnyAsync(t => !t.IsDeleted && t.EndDate >= now && t.Summary != null && t.Summary != ""
                         && (scenario == null || (t.EnglishTitle != null && t.EnglishTitle != "")), ct)
-                    && await db.Tenders.AnyAsync(t => t.EndDate >= now && t.SummaryError != null, ct))
+                    && await db.Tenders.AnyAsync(t => !t.IsDeleted && t.EndDate >= now && t.SummaryError != null, ct))
                     return Problem(statusCode: StatusCodes.Status502BadGateway,
                         title: "Tender summaries are unavailable. Check the Amazon Bedrock configuration and try again.");
                 return Problem(statusCode: StatusCodes.Status400BadRequest, title: ex.Message);
@@ -168,6 +168,7 @@ namespace TenderAI.Api.Controllers
 
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
             await db.Notifications.Where(n => n.CustomerId == customerId).ExecuteDeleteAsync(ct);
+            await db.TenderFeedback.Where(f => f.CustomerId == customerId).ExecuteDeleteAsync(ct);
             await db.CustomerAccounts.Where(a => a.CustomerId == customerId).ExecuteDeleteAsync(ct);
             await db.CustomerPayments.Where(p => p.CustomerId == customerId).ExecuteDeleteAsync(ct);
             await db.CustomerRiskFeatures.Where(r => r.CustomerId == customerId).ExecuteDeleteAsync(ct);
@@ -185,6 +186,7 @@ namespace TenderAI.Api.Controllers
         {
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
             await db.Notifications.ExecuteDeleteAsync(ct);
+            await db.TenderFeedback.ExecuteDeleteAsync(ct);
             await db.CustomerAccounts.ExecuteDeleteAsync(ct);
             await db.CustomerPayments.ExecuteDeleteAsync(ct);
             await db.CustomerRiskFeatures.ExecuteDeleteAsync(ct);
@@ -234,6 +236,10 @@ namespace TenderAI.Api.Controllers
                 .Where(n => n.CustomerId == customerId)
                 .OrderByDescending(n => n.CreatedAt)
                 .ToListAsync(ct);
+            var feedback = (await db.TenderFeedback.AsNoTracking()
+                .Where(f => f.CustomerId == customerId).ToListAsync(ct))
+                .ToDictionary(f => f.TenderId.ToString(CultureInfo.InvariantCulture), f => f.Value);
+            notifications = notifications.Where(n => feedback.GetValueOrDefault(n.LotId) != "dislike").ToList();
             var tenderIds = notifications
                 .Select(notification => long.TryParse(notification.LotId, NumberStyles.None, CultureInfo.InvariantCulture, out var id)
                     ? (long?)id
@@ -244,7 +250,7 @@ namespace TenderAI.Api.Controllers
                 .ToList();
             var tenderSummaries = (await db.Tenders
                 .AsNoTracking()
-                .Where(tender => tenderIds.Contains(tender.Id))
+                .Where(tender => tenderIds.Contains(tender.Id) && !tender.IsDeleted && tender.EndDate >= DateTime.UtcNow.AddHours(5))
                 .Select(tender => new { tender.Id, Title = tender.EnglishTitle ?? tender.Summary })
                 .ToListAsync(ct))
                 .ToDictionary(
@@ -252,8 +258,26 @@ namespace TenderAI.Api.Controllers
                     tender => tender.Title);
 
             return notifications
-                .Select(notification => notification.ToDto(tenderSummaries.GetValueOrDefault(notification.LotId)))
+                .Where(notification => tenderSummaries.ContainsKey(notification.LotId))
+                .Select(notification => notification.ToDto(tenderSummaries.GetValueOrDefault(notification.LotId)) with
+                {
+                    Feedback = feedback.GetValueOrDefault(notification.LotId)
+                })
                 .ToList();
+        }
+
+        [HttpPut("{customerId}/tenders/{tenderId:long}/feedback")]
+        public async Task<IActionResult> SetFeedback(string customerId, long tenderId, [FromBody] TenderFeedbackRequest request, CancellationToken ct)
+        {
+            customerId = NormalizeId(customerId);
+            if (request.Value is not ("like" or "dislike")) return BadRequest("Feedback must be like or dislike.");
+            if (!await db.Customers.AnyAsync(c => c.CustomerId == customerId, ct)
+                || !await db.Tenders.AnyAsync(t => t.Id == tenderId && !t.IsDeleted, ct)) return NotFound();
+            var feedback = await db.TenderFeedback.FindAsync([customerId, tenderId], ct);
+            if (feedback is null) db.TenderFeedback.Add(new TenderFeedbackEntity { CustomerId = customerId, TenderId = tenderId, Value = request.Value });
+            else feedback.Value = request.Value;
+            await db.SaveChangesAsync(ct);
+            return NoContent();
         }
 
         private Task<CustomerEntity?> FindAsync(string customerId, CancellationToken ct, bool tracking)
@@ -270,4 +294,6 @@ namespace TenderAI.Api.Controllers
         // Customer IDs are stored in upper case: c-01 and C-01 are the same customer
         private static string NormalizeId(string customerId) => customerId.Trim().ToUpperInvariant();
     }
+
+    public record TenderFeedbackRequest(string Value);
 }

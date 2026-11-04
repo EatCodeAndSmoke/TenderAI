@@ -1,4 +1,5 @@
 import { BuildingIcon, LogoIcon } from './icons.jsx';
+import { NavLink } from 'react-router-dom';
 
 // Sidebar (top bar on small screens). The page you're on gets a white highlight.
 export default function Sidebar() {
@@ -15,9 +16,10 @@ export default function Sidebar() {
       </div>
 
       <nav className="flex gap-1 md:mt-10 md:flex-col" aria-label="Main">
-        <span className="flex items-center gap-3 rounded-lg bg-white px-3 py-2.5 text-sm font-medium text-cobalt shadow-sm">
-          <BuildingIcon className="size-5 text-brand-600" /> Customers
-        </span>
+        {['customers', 'tenders'].map(page => <NavLink key={page} to={`/${page}`}
+          className={({ isActive }) => `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium ${isActive ? 'bg-white text-cobalt shadow-sm' : 'text-cobalt-soft hover:bg-white/10'}`}>
+          <BuildingIcon className="size-5" /> {page === 'customers' ? 'Customers' : 'Tenders'}
+        </NavLink>)}
       </nav>
 
       <p className="mt-auto hidden px-3 text-xs leading-relaxed text-cobalt-soft md:block">

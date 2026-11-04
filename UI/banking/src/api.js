@@ -38,9 +38,10 @@ export class ApiError extends Error {
 export const authenticate = (customerId, password) =>
   request('/customers/auth', { method: 'POST', body: JSON.stringify({ customerId, password }) });
 
-export const getAccounts = customerId => request(`/customers/${encodeURIComponent(customerId)}/accounts`);
+export const getCustomer = customerId => request(`/customers/${encodeURIComponent(customerId)}`);
 export const getMatches = customerId => request(`/customers/${encodeURIComponent(customerId)}/matches`);
-export const getTenders = () => request('/tenders');
+export const setFeedback = (customerId, tenderId, value) =>
+  request(`/customers/${encodeURIComponent(customerId)}/tenders/${tenderId}/feedback`, { method: 'PUT', body: JSON.stringify({ value }) });
 
 export async function stream(path, onEvent, signal) {
   let response;

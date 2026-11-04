@@ -67,7 +67,45 @@ namespace TenderAI.Api.Controllers
                 Response.StatusCode = StatusCodes.Status404NotFound;
                 return;
             }
+
             await RunCore(customerId, ct);
+        }
+
+        [HttpPost("/api/customers/{customerId}/discover/stream")]
+        public async Task Discover(string customerId, [FromQuery] int count,
+            [FromServices] TenderImportService importer, CancellationToken ct)
+        {
+            customerId = customerId.Trim().ToUpperInvariant();
+            if (count < 1 || count > MatchingService.MaxDiscoveryCount)
+            {
+                Response.StatusCode = StatusCodes.Status400BadRequest;
+                await Response.WriteAsJsonAsync(new ProblemDetails { Title = "Count must be between 1 and 10." }, ct);
+                return;
+            }
+            if (!await db.Customers.AnyAsync(c => c.CustomerId == customerId, ct))
+            {
+                Response.StatusCode = StatusCodes.Status404NotFound;
+                return;
+            }
+            Response.ContentType = "text/event-stream";
+            Response.Headers.CacheControl = "no-cache, no-store";
+            Response.Headers.Append("X-Accel-Buffering", "no");
+            HttpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
+            try
+            {
+                await foreach (var item in matchingService.DiscoverAsync(customerId, count, importer, ct))
+                {
+                    await Response.WriteAsync($"data: {JsonSerializer.Serialize(item, EventJsonOptions)}\n\n", ct);
+                    await Response.Body.FlushAsync(ct);
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Tender discovery failed for customer {CustomerId}.", customerId);
+                await Response.WriteAsync($"data: {JsonSerializer.Serialize(new { type = "error", message = "Tender search stopped. Check UZEX and Bedrock configuration; completed results were saved." }, EventJsonOptions)}\n\n", ct);
+                await Response.Body.FlushAsync(ct);
+            }
         }
 
         private async Task RunCore(string? customerId, CancellationToken ct)
