@@ -51,6 +51,102 @@ public class TenderDiscoveryTests
     }
 
     [Fact]
+    public async Task ApplicationPersistsIndependentlyOfFeedbackAndIsReturnedOnLaterSearches()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options;
+        await using var db = new TenderAiDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.AddRange(Customer("C-1"), Customer("C-2"));
+        db.Tenders.AddRange(Tender(1), Tender(2));
+        await db.SaveChangesAsync();
+        var controller = new CustomersController(db);
+        Assert.IsType<ConflictObjectResult>((await controller.Apply("C-1", 1, CancellationToken.None)).Result);
+        Assert.IsType<NotFoundResult>((await controller.Apply("C-404", 1, CancellationToken.None)).Result);
+
+        using var http = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
+        await foreach (var _ in Matcher(db).DiscoverAsync("C-1", 1, Importer(db, http), CancellationToken.None)) { }
+        Assert.IsType<NoContentResult>(await controller.SetFeedback("C-1", 1, new TenderFeedbackRequest("like"), CancellationToken.None));
+        var application = (await controller.Apply("c-1", 1, CancellationToken.None)).Value!;
+        Assert.Equal("applied", application.Status);
+        Assert.Equal(DateTimeKind.Utc, application.AppliedAt.Kind);
+        Assert.Equal(application, (await controller.Apply("C-1", 1, CancellationToken.None)).Value);
+        Assert.IsType<ConflictObjectResult>((await controller.Apply("C-2", 1, CancellationToken.None)).Result);
+
+        db.ChangeTracker.Clear();
+        var loaded = Assert.Single((await controller.GetMatches("C-1", CancellationToken.None)).Value!);
+        Assert.Equal("like", loaded.Feedback);
+        Assert.Equal(application.AppliedAt, loaded.AppliedAt);
+        var events = new List<TenderDiscoveryEvent>();
+        await foreach (var item in Matcher(db).DiscoverAsync("C-1", 1, Importer(db, http), CancellationToken.None)) events.Add(item);
+        var streamed = Assert.Single(events, e => e.Type == "match").Match!;
+        Assert.Equal("like", streamed.Feedback);
+        Assert.Equal(application.AppliedAt, streamed.AppliedAt);
+        Assert.Equal(1, await db.TenderApplications.CountAsync());
+
+        Assert.IsType<NoContentResult>(await controller.SetFeedback("C-1", 1, new TenderFeedbackRequest("dislike"), CancellationToken.None));
+        Assert.Empty((await controller.GetMatches("C-1", CancellationToken.None)).Value!);
+        Assert.Single(await db.TenderApplications.AsNoTracking().ToListAsync());
+        var later = new List<TenderDiscoveryEvent>();
+        await foreach (var item in Matcher(db).DiscoverAsync("C-1", 1, Importer(db, http), CancellationToken.None)) later.Add(item);
+        Assert.Equal(2, Assert.Single(later, e => e.Type == "match").Tender!.Id);
+        Assert.Equal("dislike", (await db.TenderFeedback.AsNoTracking().SingleAsync()).Value);
+        Assert.IsType<NoContentResult>(await controller.Delete("C-1", CancellationToken.None));
+        Assert.Empty(await db.TenderApplications.AsNoTracking().ToListAsync());
+        Assert.Empty(await db.TenderFeedback.AsNoTracking().ToListAsync());
+        Assert.True(await db.Customers.AnyAsync(c => c.CustomerId == "C-2"));
+    }
+
+    [Fact]
+    public async Task ApplicationRequiresAnOpenMatchingTenderAndRejectsDislikedTenders()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options;
+        await using var db = new TenderAiDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        db.Tenders.AddRange(Tender(1), Tender(2));
+        await db.SaveChangesAsync();
+        using var http = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
+        await foreach (var _ in Matcher(db).DiscoverAsync("C-1", 2, Importer(db, http), CancellationToken.None)) { }
+        var controller = new CustomersController(db);
+        await controller.SetFeedback("C-1", 1, new TenderFeedbackRequest("dislike"), CancellationToken.None);
+        Assert.IsType<ConflictObjectResult>((await controller.Apply("C-1", 1, CancellationToken.None)).Result);
+        var expired = await db.Tenders.SingleAsync(t => t.Id == 2);
+        expired.EndDate = DateTime.UtcNow.AddDays(-1);
+        await db.SaveChangesAsync();
+        Assert.IsType<ConflictObjectResult>((await controller.Apply("C-1", 2, CancellationToken.None)).Result);
+        Assert.Empty(await db.TenderApplications.ToListAsync());
+    }
+
+    [Fact]
+    public async Task ExistingDatabaseGetsApplicationTableWithoutLosingFeedback()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options;
+        await using var db = new TenderAiDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        db.Tenders.Add(Tender(1));
+        db.TenderFeedback.Add(new TenderFeedbackEntity { CustomerId = "C-1", TenderId = 1, Value = "like" });
+        await db.SaveChangesAsync();
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE \"TenderApplications\"");
+
+        DatabaseSchema.AddMissingTables(db);
+        DatabaseSchema.AddMissingTables(db);
+        db.ChangeTracker.Clear();
+        Assert.Equal("like", (await db.TenderFeedback.SingleAsync()).Value);
+        Assert.Empty(await db.TenderApplications.ToListAsync());
+        db.TenderApplications.Add(new TenderApplicationEntity { CustomerId = "C-1", TenderId = 1, AppliedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        Assert.Single(await db.TenderApplications.ToListAsync());
+    }
+
+    [Fact]
     public async Task DiscoveryImportsAdditionalTendersAndHonorsTenMatchLimit()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
@@ -103,6 +199,7 @@ public class TenderDiscoveryTests
         db.Customers.Add(Customer("C-1"));
         db.Tenders.Add(Tender(1));
         db.TenderFeedback.Add(new TenderFeedbackEntity { CustomerId = "C-1", TenderId = 1, Value = "like" });
+        db.TenderApplications.Add(new TenderApplicationEntity { CustomerId = "C-1", TenderId = 1, AppliedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
         var controller = new TendersController(db);
         using var initialHttp = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
@@ -111,6 +208,7 @@ public class TenderDiscoveryTests
         Assert.IsType<NoContentResult>(await controller.Delete(1, CancellationToken.None));
         Assert.Empty((await controller.GetAll(CancellationToken.None, true)).Value!);
         Assert.Empty(await db.TenderFeedback.ToListAsync());
+        Assert.Empty(await db.TenderApplications.ToListAsync());
         Assert.Empty(await db.Notifications.ToListAsync());
         var handler = new UzexHandler(2);
         using var http = new HttpClient(handler) { BaseAddress = new Uri("https://uzex.test/") };

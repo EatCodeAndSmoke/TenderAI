@@ -169,6 +169,7 @@ namespace TenderAI.Api.Controllers
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
             await db.Notifications.Where(n => n.CustomerId == customerId).ExecuteDeleteAsync(ct);
             await db.TenderFeedback.Where(f => f.CustomerId == customerId).ExecuteDeleteAsync(ct);
+            await db.TenderApplications.Where(a => a.CustomerId == customerId).ExecuteDeleteAsync(ct);
             await db.CustomerAccounts.Where(a => a.CustomerId == customerId).ExecuteDeleteAsync(ct);
             await db.CustomerPayments.Where(p => p.CustomerId == customerId).ExecuteDeleteAsync(ct);
             await db.CustomerRiskFeatures.Where(r => r.CustomerId == customerId).ExecuteDeleteAsync(ct);
@@ -187,6 +188,7 @@ namespace TenderAI.Api.Controllers
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
             await db.Notifications.ExecuteDeleteAsync(ct);
             await db.TenderFeedback.ExecuteDeleteAsync(ct);
+            await db.TenderApplications.ExecuteDeleteAsync(ct);
             await db.CustomerAccounts.ExecuteDeleteAsync(ct);
             await db.CustomerPayments.ExecuteDeleteAsync(ct);
             await db.CustomerRiskFeatures.ExecuteDeleteAsync(ct);
@@ -239,6 +241,10 @@ namespace TenderAI.Api.Controllers
             var feedback = (await db.TenderFeedback.AsNoTracking()
                 .Where(f => f.CustomerId == customerId).ToListAsync(ct))
                 .ToDictionary(f => f.TenderId.ToString(CultureInfo.InvariantCulture), f => f.Value);
+            var applications = (await db.TenderApplications.AsNoTracking()
+                .Where(a => a.CustomerId == customerId).ToListAsync(ct))
+                .ToDictionary(a => a.TenderId.ToString(CultureInfo.InvariantCulture),
+                    a => DateTime.SpecifyKind(a.AppliedAt, DateTimeKind.Utc));
             notifications = notifications.Where(n => feedback.GetValueOrDefault(n.LotId) != "dislike").ToList();
             var tenderIds = notifications
                 .Select(notification => long.TryParse(notification.LotId, NumberStyles.None, CultureInfo.InvariantCulture, out var id)
@@ -261,7 +267,8 @@ namespace TenderAI.Api.Controllers
                 .Where(notification => tenderSummaries.ContainsKey(notification.LotId))
                 .Select(notification => notification.ToDto(tenderSummaries.GetValueOrDefault(notification.LotId)) with
                 {
-                    Feedback = feedback.GetValueOrDefault(notification.LotId)
+                    Feedback = feedback.GetValueOrDefault(notification.LotId),
+                    AppliedAt = applications.TryGetValue(notification.LotId, out var appliedAt) ? appliedAt : null
                 })
                 .ToList();
         }
@@ -280,6 +287,37 @@ namespace TenderAI.Api.Controllers
             return NoContent();
         }
 
+        [HttpPut("{customerId}/tenders/{tenderId:long}/application")]
+        public async Task<ActionResult<TenderApplicationDto>> Apply(string customerId, long tenderId, CancellationToken ct)
+        {
+            customerId = NormalizeId(customerId);
+            var lotId = tenderId.ToString(CultureInfo.InvariantCulture);
+            var now = DateTime.UtcNow;
+            var localNow = now.AddHours(5);
+            await db.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO "TenderApplications" ("CustomerId", "TenderId", "AppliedAt")
+                SELECT {customerId}, {tenderId}, {now}
+                WHERE EXISTS (SELECT 1 FROM "Customers" WHERE "CustomerId" = {customerId})
+                  AND EXISTS (SELECT 1 FROM "Tenders"
+                              WHERE "Id" = {tenderId} AND "IsDeleted" = 0 AND "EndDate" >= {localNow})
+                  AND EXISTS (SELECT 1 FROM "Notifications"
+                              WHERE "CustomerId" = {customerId} AND "LotId" = {lotId})
+                  AND NOT EXISTS (SELECT 1 FROM "TenderFeedback"
+                                  WHERE "CustomerId" = {customerId} AND "TenderId" = {tenderId} AND "Value" = 'dislike')
+                ON CONFLICT ("CustomerId", "TenderId") DO NOTHING
+                """, ct);
+
+            var application = await db.TenderApplications.AsNoTracking()
+                .SingleOrDefaultAsync(a => a.CustomerId == customerId && a.TenderId == tenderId, ct);
+            if (application is not null) return ToApplicationDto(application);
+            if (!await db.Customers.AnyAsync(c => c.CustomerId == customerId, ct)
+                || !await db.Tenders.AnyAsync(t => t.Id == tenderId && !t.IsDeleted, ct)) return NotFound();
+            return Conflict(new ProblemDetails { Title = "Only an open, matching tender can be marked for preparation." });
+        }
+
+        private static TenderApplicationDto ToApplicationDto(TenderApplicationEntity application) =>
+            new("applied", DateTime.SpecifyKind(application.AppliedAt, DateTimeKind.Utc));
+
         private Task<CustomerEntity?> FindAsync(string customerId, CancellationToken ct, bool tracking)
         {
             customerId = NormalizeId(customerId);
@@ -296,4 +334,5 @@ namespace TenderAI.Api.Controllers
     }
 
     public record TenderFeedbackRequest(string Value);
+    public record TenderApplicationDto(string Status, DateTime AppliedAt);
 }

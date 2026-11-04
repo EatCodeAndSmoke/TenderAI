@@ -91,6 +91,7 @@ namespace TenderAI.Api.Data
 
                 db.Notifications.Where(notification => ids.Contains(notification.CustomerId)).ExecuteDelete();
                 db.TenderFeedback.Where(feedback => ids.Contains(feedback.CustomerId)).ExecuteDelete();
+                db.TenderApplications.Where(application => ids.Contains(application.CustomerId)).ExecuteDelete();
                 db.CustomerAccounts.Where(account => ids.Contains(account.CustomerId)).ExecuteDelete();
                 db.CustomerPayments.Where(payment => ids.Contains(payment.CustomerId)).ExecuteDelete();
                 db.CustomerRiskFeatures.Where(risk => ids.Contains(risk.CustomerId)).ExecuteDelete();
