@@ -79,6 +79,7 @@ namespace TenderAI.Api.Services
                         }
                         var notification = CreateNotification(customer, tender, match.Reason, timeProvider.GetUtcNow().UtcDateTime);
                         string? currentFeedback;
+                        DateTime? appliedAt;
                         await using (var transaction = await db.Database.BeginTransactionAsync(ct))
                         {
                             if (!await db.Tenders.AsNoTracking().AnyAsync(t => t.Id == tender.Id && !t.IsDeleted, ct))
@@ -87,6 +88,9 @@ namespace TenderAI.Api.Services
                                 .Where(f => f.CustomerId == customerId && f.TenderId == tender.Id)
                                 .Select(f => f.Value).SingleOrDefaultAsync(ct);
                             if (currentFeedback == "dislike") continue;
+                            appliedAt = await db.TenderApplications.AsNoTracking()
+                                .Where(a => a.CustomerId == customerId && a.TenderId == tender.Id)
+                                .Select(a => (DateTime?)a.AppliedAt).SingleOrDefaultAsync(ct);
                             await db.Notifications.Where(n => n.CustomerId == customerId && n.LotId == match.TenderId).ExecuteDeleteAsync(ct);
                             db.Notifications.Add(notification);
                             await db.SaveChangesAsync(ct);
@@ -94,7 +98,11 @@ namespace TenderAI.Api.Services
                         }
                         matchedCount++;
                         yield return new TenderDiscoveryEvent("match", matchedCount,
-                            tender.ToDto(), notification.ToDto(tender.EnglishTitle) with { Feedback = currentFeedback });
+                            tender.ToDto(), notification.ToDto(tender.EnglishTitle) with
+                            {
+                                Feedback = currentFeedback,
+                                AppliedAt = appliedAt.HasValue ? DateTime.SpecifyKind(appliedAt.Value, DateTimeKind.Utc) : null
+                            });
                         if (matchedCount == count) break;
                     }
                     yield return new TenderDiscoveryEvent("progress", matchedCount, Imported: importedCount);

@@ -116,6 +116,7 @@ namespace TenderAI.Api.Controllers
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
             await db.Notifications.Where(n => n.LotId == id.ToString()).ExecuteDeleteAsync(ct);
             await db.TenderFeedback.Where(f => f.TenderId == id).ExecuteDeleteAsync(ct);
+            await db.TenderApplications.Where(a => a.TenderId == id).ExecuteDeleteAsync(ct);
             tender.IsDeleted = true;
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
@@ -130,6 +131,7 @@ namespace TenderAI.Api.Controllers
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
             await db.Notifications.ExecuteDeleteAsync(ct);
             await db.TenderFeedback.ExecuteDeleteAsync(ct);
+            await db.TenderApplications.ExecuteDeleteAsync(ct);
             await db.Tenders.Where(t => !t.IsDeleted).ExecuteUpdateAsync(setters => setters.SetProperty(t => t.IsDeleted, true), ct);
             await transaction.CommitAsync(ct);
 

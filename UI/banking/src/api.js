@@ -42,6 +42,8 @@ export const getCustomer = customerId => request(`/customers/${encodeURIComponen
 export const getMatches = customerId => request(`/customers/${encodeURIComponent(customerId)}/matches`);
 export const setFeedback = (customerId, tenderId, value) =>
   request(`/customers/${encodeURIComponent(customerId)}/tenders/${tenderId}/feedback`, { method: 'PUT', body: JSON.stringify({ value }) });
+export const applyForTender = (customerId, tenderId) =>
+  request(`/customers/${encodeURIComponent(customerId)}/tenders/${tenderId}/application`, { method: 'PUT' });
 
 export async function stream(path, onEvent, signal) {
   let response;
