@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TenderAI.Api.Contracts;
@@ -21,6 +22,7 @@ namespace TenderAI.Api.Controllers
         {
             var tenders = await db.Tenders
                 .AsNoTracking()
+                .Where(t => t.EndDate >= DateTime.UtcNow.AddHours(5))
                 .OrderBy(t => t.EndDate)
                 .ThenBy(t => t.Id)
                 .ToListAsync(ct);
@@ -52,6 +54,7 @@ namespace TenderAI.Api.Controllers
             {
                 loaded = await importer.LoadNewAsync(count, ct);
             }
+
             catch (Exception ex) when (ex is HttpRequestException or JsonException
                 || (ex is TaskCanceledException && !ct.IsCancellationRequested))
             {
@@ -66,6 +69,43 @@ namespace TenderAI.Api.Controllers
                 .ThenBy(t => t.Id)
                 .Select(t => t.ToDto())
                 .ToList();
+        }
+
+        [HttpPost("load/stream")]
+        public async Task LoadStreaming(
+            [FromServices] TenderImportService importer,
+            [FromServices] ILogger<TendersController> logger,
+            [FromQuery] int count = DefaultLoadCount,
+            CancellationToken ct = default)
+        {
+            if (count < 1 || count > TenderImportService.MaxTendersPerLoad)
+            {
+                Response.StatusCode = StatusCodes.Status400BadRequest;
+                await Response.WriteAsJsonAsync(new ProblemDetails { Title = $"Count must be between 1 and {TenderImportService.MaxTendersPerLoad}." }, ct);
+                return;
+            }
+            Response.ContentType = "text/event-stream";
+            Response.Headers.CacheControl = "no-cache, no-store";
+            Response.Headers.Append("X-Accel-Buffering", "no");
+            HttpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
+            var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+            try
+            {
+                await foreach (var tender in importer.LoadNewStreamingAsync(count, ct))
+                {
+                    await Response.WriteAsync($"data: {JsonSerializer.Serialize(new { type = "tender", tender = tender.ToDto() }, options)}\n\n", ct);
+                    await Response.Body.FlushAsync(ct);
+                }
+                await Response.WriteAsync("data: {\"type\":\"completed\"}\n\n", ct);
+                await Response.Body.FlushAsync(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Streaming UZEX tenders failed.");
+                await Response.WriteAsync($"data: {JsonSerializer.Serialize(new { type = "error", message = "Could not load tenders from UZEX. Already loaded tenders were saved." }, options)}\n\n", ct);
+                await Response.Body.FlushAsync(ct);
+            }
         }
 
         // DELETE api/tenders

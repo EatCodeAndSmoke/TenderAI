@@ -7,6 +7,7 @@ namespace TenderAI.Api.Contracts
         string DisplayNo,
         string Source,
         string SourceUrl,
+        string? EnglishTitle,
         string? Summary,
         string? SummaryError,
         decimal StartPrice,

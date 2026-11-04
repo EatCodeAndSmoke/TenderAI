@@ -67,6 +67,7 @@
         public DateTime LoadedAt { get; set; }
 
         public string? Summary { get; set; }
+        public string? EnglishTitle { get; set; }
         public int? SummaryVersion { get; set; }
         public string? SummaryError { get; set; }
 

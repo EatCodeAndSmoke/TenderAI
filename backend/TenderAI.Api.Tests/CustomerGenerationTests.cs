@@ -506,6 +506,68 @@ public class CustomerGenerationTests
         Assert.Contains(summary, prompt);
     }
 
+    [Theory]
+    [InlineData("offer", true, true)]
+    [InlineData("match", true, false)]
+    [InlineData("none", false, false)]
+    public async Task SingleCustomerScenarioIsVerifiedAndAccountsPersist(string scenario, bool hasMatch, bool hasOffer)
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options;
+        await using var db = new TenderAiDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        db.Tenders.Add(CreateTender(101, "The buyer is purchasing bread for public schools."));
+        await db.SaveChangesAsync();
+        var matcher = new MatchingService(db, new ProductEvidenceEvaluator(), TimeProvider.System, NullLogger<MatchingService>.Instance);
+        var generator = new CustomerGenerationService(db, new FakeProfileGenerator());
+
+        var result = await generator.GenerateAsync(scenario, CancellationToken.None, matcher);
+        Assert.Single(result);
+        var customer = await db.Customers.Include(c => c.Accounts).SingleAsync();
+        Assert.Equal(new[] { "EUR", "GEL", "USD" }, customer.Accounts.Select(a => a.Currency).Order().ToArray());
+        var iban = Assert.Single(customer.Accounts.Select(a => a.Iban).Distinct());
+        Assert.Matches(@"^GE\d{2}TB\d{16}$", iban);
+        var rearranged = iban[4..] + iban[..4];
+        var remainder = 0;
+        foreach (var character in rearranged)
+            foreach (var digit in char.IsDigit(character) ? character.ToString() : (character - 'A' + 10).ToString())
+                remainder = (remainder * 10 + digit - '0') % 97;
+        Assert.Equal(1, remainder);
+
+        var events = new List<MatchRunEvent>();
+        await foreach (var item in matcher.RunStreamingAsync(CancellationToken.None, customer.CustomerId)) events.Add(item);
+        var matches = Assert.Single(events, e => e.Type == "customer-completed").Matches!;
+        Assert.Equal(hasMatch, matches.Count > 0);
+        Assert.Equal(hasOffer, matches.Any(m => m.Offer is not null));
+        var notifications = await new CustomersController(db).GetNotifications(customer.CustomerId, CancellationToken.None);
+        Assert.Empty(Assert.IsAssignableFrom<IEnumerable<NotificationDto>>(notifications.Value));
+    }
+
+    [Fact]
+    public async Task FailedScenarioVerificationDoesNotSaveCustomerOrAccounts()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options;
+        await using var db = new TenderAiDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        db.Tenders.Add(CreateTender(101, "The buyer is purchasing bread for public schools."));
+        await db.SaveChangesAsync();
+        var matcher = new MatchingService(db, new NoMatchesEvaluator(), TimeProvider.System, NullLogger<MatchingService>.Instance);
+        var generator = new CustomerGenerationService(db, new FakeProfileGenerator());
+        await Assert.ThrowsAsync<CustomerProfileGenerationException>(() => generator.GenerateAsync("offer", CancellationToken.None, matcher));
+        Assert.Empty(await db.Customers.ToListAsync());
+        Assert.Empty(await db.CustomerAccounts.ToListAsync());
+    }
+
+    private sealed class NoMatchesEvaluator : ITenderMatchEvaluator
+    {
+        public Task<IReadOnlyList<TenderCandidateMatch>> EvaluateCustomerAsync(
+            CustomerMatchEvidence customer, IReadOnlyCollection<TenderMatchEvidence> tenders, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<TenderCandidateMatch>>([]);
+    }
+
     private static TenderEntity CreateTender(long id, string summary)
     {
         var productName = summary.Contains("bread", StringComparison.OrdinalIgnoreCase)
@@ -524,6 +586,7 @@ public class CustomerGenerationTests
             StartPrice = 240_000_000,
             CurrencyCode = "UZS",
             Summary = summary,
+            EnglishTitle = "Tender supply",
             RegionName = "Tashkent",
             DeliveryRegion = "Tashkent",
             DeliveryDistrict = "Yunusobod",

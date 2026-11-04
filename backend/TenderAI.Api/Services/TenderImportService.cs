@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using System.Runtime.CompilerServices;
 using TenderAI.Api.Data;
 using TenderAI.Api.Data.Entities;
 using TenderAI.Api.Services.Uzex;
@@ -15,7 +16,6 @@ namespace TenderAI.Api.Services
         ILogger<TenderImportService> logger)
     {
         private const int ListPageSize = 50;
-        private const int MaxParallelDetails = 4;
         public const int MaxTendersPerLoad = 5;
 
         // One load at a time, so two clicks can't save the same lot twice
@@ -25,6 +25,13 @@ namespace TenderAI.Api.Services
         // Walks the UZEX list page by page and skips lots that are already loaded.
         // A lot whose details can't be read is skipped, and the next new one is taken instead.
         public async Task<List<TenderEntity>> LoadNewAsync(int count, CancellationToken ct)
+        {
+            var loaded = new List<TenderEntity>();
+            await foreach (var tender in LoadNewStreamingAsync(count, ct)) loaded.Add(tender);
+            return loaded;
+        }
+
+        public async IAsyncEnumerable<TenderEntity> LoadNewStreamingAsync(int count, [EnumeratorCancellation] CancellationToken ct)
         {
             count = Math.Clamp(count, 1, MaxTendersPerLoad);
             await LoadLock.WaitAsync(ct);
@@ -39,10 +46,10 @@ namespace TenderAI.Api.Services
                 }
 
                 var known = (await db.Tenders.Select(t => t.Id).ToListAsync(ct)).ToHashSet();
-                var loaded = new List<TenderEntity>();
+                var loaded = 0;
                 var loadedAt = DateTime.UtcNow;
 
-                for (int from = 1, total = int.MaxValue; loaded.Count < count && from <= total; from += ListPageSize)
+                for (int from = 1, total = int.MaxValue; loaded < count && from <= total; from += ListPageSize)
                 {
                     var page = await uzex.GetTradeListAsync(from, from + ListPageSize - 1, ct);
                     if (page.Count == 0) break;
@@ -50,25 +57,19 @@ namespace TenderAI.Api.Services
 
                     // known.Add is false for lots in the database and for repeats within the list
                     var candidates = new Queue<UzexTradeListItem>(page.Where(item => known.Add(item.Id)));
-                    while (candidates.Count > 0 && loaded.Count < count)
+                    while (candidates.Count > 0 && loaded < count)
                     {
-                        var batch = new List<UzexTradeListItem>();
-                        while (candidates.Count > 0 && batch.Count < count - loaded.Count)
-                        {
-                            batch.Add(candidates.Dequeue());
-                        }
-
-                        var tenders = await ReadDetailsAsync(batch, loadedAt, ct);
-                        var successfulDetails = tenders.OfType<TenderEntity>().ToList();
-                        await summarizer.SummarizeTendersAsync(successfulDetails, ct);
-                        loaded.AddRange(successfulDetails);
+                        var tender = await ReadDetailsAsync(candidates.Dequeue(), loadedAt, ct);
+                        if (tender is null) continue;
+                        await summarizer.SummarizeTendersAsync([tender], ct);
+                        db.Tenders.Add(tender);
+                        await db.SaveChangesAsync(ct);
+                        loaded++;
+                        yield return tender;
                     }
                 }
 
-                db.Tenders.AddRange(loaded);
-                await db.SaveChangesAsync(ct);
-                logger.LogInformation("Loaded {Count} new tenders from UZEX", loaded.Count);
-                return loaded;
+                logger.LogInformation("Loaded {Count} new tenders from UZEX", loaded);
             }
             finally
             {
@@ -76,30 +77,19 @@ namespace TenderAI.Api.Services
             }
         }
 
-        // Details take about a second per lot, so a few are read at the same time.
-        // The result keeps the list order and has null for lots that failed.
-        private async Task<TenderEntity?[]> ReadDetailsAsync(List<UzexTradeListItem> batch, DateTime loadedAt, CancellationToken ct)
+        private async Task<TenderEntity?> ReadDetailsAsync(UzexTradeListItem item, DateTime loadedAt, CancellationToken ct)
         {
-            using var throttle = new SemaphoreSlim(MaxParallelDetails);
-            return await Task.WhenAll(batch.Select(async item =>
+            try
             {
-                await throttle.WaitAsync(ct);
-                try
-                {
-                    var details = await uzex.GetTradeAsync(item.Id, ct);
-                    var sourceUrl = string.Format(options.Value.LotUrl, item.Id);
-                    return UzexMapping.ToTenderEntity(item, details, sourceUrl, loadedAt);
-                }
-                catch (Exception ex) when (!ct.IsCancellationRequested)
-                {
-                    logger.LogWarning(ex, "Skipped UZEX lot {LotId}: its details couldn't be read", item.Id);
-                    return null;
-                }
-                finally
-                {
-                    throttle.Release();
-                }
-            }));
+                var details = await uzex.GetTradeAsync(item.Id, ct);
+                var sourceUrl = string.Format(options.Value.LotUrl, item.Id);
+                return UzexMapping.ToTenderEntity(item, details, sourceUrl, loadedAt);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                logger.LogWarning(ex, "Skipped UZEX lot {LotId}: its details couldn't be read", item.Id);
+                return null;
+            }
         }
     }
 }

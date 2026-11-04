@@ -36,7 +36,10 @@ namespace TenderAI.Api.Services
         private static readonly string[] CompanyDescriptors = ["Meridian", "Alliance", "Pioneer", "Horizon", "Central", "Golden", "Crescent", "Evergreen"];
         private static readonly string[] CompanySectors = ["Trading", "Supplies", "Enterprise", "Industries", "Partners", "Commerce"];
 
-        public async Task<IReadOnlyList<CustomerRecordDto>> GenerateAsync(CancellationToken ct)
+        public Task<IReadOnlyList<CustomerRecordDto>> GenerateAsync(CancellationToken ct) => GenerateAsync(null, ct);
+
+        public async Task<IReadOnlyList<CustomerRecordDto>> GenerateAsync(
+            string? scenario, CancellationToken ct, MatchingService? verifier = null, int scenarioAttempt = 0)
         {
             var now = DateTime.UtcNow.AddHours(5);
             var storedTenders = await db.Tenders
@@ -47,6 +50,7 @@ namespace TenderAI.Api.Services
                 .ToListAsync(ct);
             var tenders = storedTenders
                 .Where(tender => !string.IsNullOrWhiteSpace(tender.Summary))
+                .Where(tender => scenario is null || !string.IsNullOrWhiteSpace(tender.EnglishTitle))
                 .Select(ToTenderSource)
                 .Where(tender => tender.Products.Count > 0 && FindIndustry(tender.MatchingEvidence) is not null)
                 .ToList();
@@ -72,8 +76,12 @@ namespace TenderAI.Api.Services
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             var loanEligibleTenders = tenders
-                .Where(tender => string.Equals(tender.CurrencyCode, "UZS", StringComparison.OrdinalIgnoreCase))
+                .Where(tender => string.Equals(tender.CurrencyCode, "UZS", StringComparison.OrdinalIgnoreCase) && tender.StartPrice > 0)
                 .ToList();
+            if (scenario == "offer" && loanEligibleTenders.Count == 0)
+            {
+                throw new NoAvailableTenderSummaryException("Load an open UZS tender with a positive price before generating a loan-offer customer.");
+            }
             var firstMatchingTender = Pick(loanEligibleTenders.Count > 0 ? loanEligibleTenders : tenders);
             var firstExpectedIndustry = FindIndustry(firstMatchingTender.MatchingEvidence);
             var secondMatchingTender = PickDistinctMatchingTender(tenders, firstMatchingTender, firstExpectedIndustry);
@@ -81,7 +89,7 @@ namespace TenderAI.Api.Services
             var canUseDistinctActivities = firstExpectedIndustry is not null
                 && secondExpectedIndustry is not null
                 && !StringComparer.Ordinal.Equals(firstExpectedIndustry.Code, secondExpectedIndustry.Code);
-            var plans = new[]
+            var allPlans = new[]
             {
                 new GenerationPlan(
                     "en",
@@ -93,6 +101,14 @@ namespace TenderAI.Api.Services
                     false),
                 new GenerationPlan("ru", true, false, secondMatchingTender, secondExpectedIndustry, 18, canUseDistinctActivities),
                 new GenerationPlan("uz", false, false, Pick(tenders), null, 6, false)
+            };
+            var plans = scenario switch
+            {
+                null => allPlans,
+                "offer" => [allPlans[0]],
+                "match" => [allPlans[1]],
+                "none" => [allPlans[2]],
+                _ => throw new ArgumentException("Unknown customer scenario.", nameof(scenario))
             };
 
             // The first AI requests run concurrently; collisions are resolved in order below.
@@ -145,6 +161,14 @@ namespace TenderAI.Api.Services
                 new CustomerIdentity($"C-{nextNumber + index:D2}", NextTaxCode(taxCodes)),
                 profile,
                 today)).ToList();
+
+            if (scenario is not null && verifier is not null
+                && !await verifier.VerifyScenarioAsync(customers[0], scenario, ct))
+            {
+                if (scenarioAttempt < 2) return await GenerateAsync(scenario, ct, verifier, scenarioAttempt + 1);
+                throw new CustomerProfileGenerationException(
+                    "Could not generate a customer that meets the selected scenario after three attempts. No customer was saved; try loading different tenders.");
+            }
 
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
             db.Customers.AddRange(customers);
@@ -202,6 +226,7 @@ namespace TenderAI.Api.Services
                     PreApprovedLimit = preApprovedLimit,
                     KycPassed = true
                 },
+                Accounts = DemoAccounts.Create(identity.CustomerId),
                 Payments = plan.MatchesTender
                     ? profile.PaymentDescriptions.Select((description, index) => new CustomerPaymentEntity
                     {
@@ -597,8 +622,8 @@ namespace TenderAI.Api.Services
             IReadOnlyList<TenderProductSource> Products);
     }
 
-    public sealed class NoAvailableTenderSummaryException()
-        : Exception("Load at least one open tender with products and an activity that can be matched before generating customers.");
+    public sealed class NoAvailableTenderSummaryException(string? message = null)
+        : Exception(message ?? "Load at least one open tender with products and an activity that can be matched before generating customers.");
 
     public sealed class CustomerProfileGenerationException(string message, Exception? innerException = null)
         : Exception(message, innerException);

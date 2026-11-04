@@ -26,7 +26,7 @@ namespace TenderAI.Api.Services
                 },
                 inferenceConfig = new
                 {
-                    max_new_tokens = 220,
+                    max_new_tokens = 400,
                     temperature = 0.1
                 }
             });
@@ -51,9 +51,24 @@ namespace TenderAI.Api.Services
                 .FirstOrDefault(text => !string.IsNullOrWhiteSpace(text))
                 ?.Trim();
 
-            return string.IsNullOrWhiteSpace(summary)
-                ? throw new InvalidOperationException("Amazon Bedrock returned an empty tender summary.")
-                : summary;
+            if (string.IsNullOrWhiteSpace(summary))
+                throw new InvalidOperationException("Amazon Bedrock returned an empty tender summary.");
+            var text = summary.Trim();
+            if (text.StartsWith("```", StringComparison.Ordinal))
+            {
+                var start = text.IndexOf('\n');
+                var end = text.LastIndexOf("```", StringComparison.Ordinal);
+                if (start < 0 || end <= start) throw new InvalidOperationException("Invalid tender summary format.");
+                text = text[(start + 1)..end].Trim();
+            }
+            using var result = JsonDocument.Parse(text);
+            var title = result.RootElement.GetProperty("title").GetString()?.Trim();
+            var description = result.RootElement.GetProperty("summary").GetString()?.Trim();
+            if (string.IsNullOrWhiteSpace(title) || title.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length > 8
+                || string.IsNullOrWhiteSpace(description))
+                throw new InvalidOperationException("Amazon Bedrock returned an invalid tender title or summary.");
+            tender.EnglishTitle = title;
+            return description;
         }
     }
 }

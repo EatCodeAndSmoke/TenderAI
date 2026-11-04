@@ -30,6 +30,7 @@ namespace TenderAI.Api.Data.Entities
 
         public CustomerRiskFeaturesEntity? RiskFeatures { get; set; }
         public List<CustomerPaymentEntity> Payments { get; set; } = [];
+        public List<CustomerAccountEntity> Accounts { get; set; } = [];
         public List<NotificationEntity> Notifications { get; set; } = [];
     }
 }

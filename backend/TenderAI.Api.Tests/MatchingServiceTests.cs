@@ -17,6 +17,27 @@ namespace TenderAI.Api.Tests;
 public class MatchingServiceTests
 {
     [Fact]
+    public async Task CustomerRunDoesNotEvaluateOrReplaceOtherCustomersMatches()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options;
+        await using var db = new TenderAiDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.AddRange(CreateCustomer("C-01", 100_000_000), CreateCustomer("C-02", 100_000_000));
+        db.Tenders.Add(CreateTender());
+        await db.SaveChangesAsync();
+        var evaluator = new FakeMatchEvaluator([new TenderCandidateMatch("511680", "The activity and incoming payments support this tender.")]);
+        var service = CreateService(db, evaluator);
+        var events = new List<MatchRunEvent>();
+        await foreach (var item in service.RunStreamingAsync(CancellationToken.None, "C-02")) events.Add(item);
+        Assert.Equal("C-02", evaluator.LastCustomer?.CustomerId);
+        Assert.Equal(1, evaluator.Calls);
+        Assert.Equal("C-02", Assert.Single(await db.Notifications.ToListAsync()).CustomerId);
+        Assert.Single(events, e => e.Type == "customer-completed");
+    }
+
+    [Fact]
     public async Task RunSendsOneCustomerAndAllOpenTendersAndPersistsReturnedMatches()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

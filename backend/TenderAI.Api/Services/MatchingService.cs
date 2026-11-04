@@ -17,18 +17,42 @@ namespace TenderAI.Api.Services
         private static readonly TimeSpan TashkentOffset = TimeSpan.FromHours(5);
         private const int MaxConcurrentCustomerEvaluations = 2;
 
+        public async Task<bool> VerifyScenarioAsync(CustomerEntity customer, string scenario, CancellationToken ct)
+        {
+            var now = timeProvider.GetUtcNow().ToOffset(TashkentOffset).DateTime;
+            var today = DateOnly.FromDateTime(now);
+            var tenders = await db.Tenders.AsNoTracking().Include(t => t.Products)
+                .Where(t => t.EndDate >= now).ToListAsync(ct);
+            using var semaphore = new SemaphoreSlim(1);
+            var evaluation = await EvaluateCustomerAsync(
+                customer, tenders.Select(ToTenderEvidence).ToList(), today.AddMonths(-12), today, semaphore, ct);
+            if (evaluation.Error is not null)
+                throw new CustomerProfileGenerationException("Could not verify the customer scenario with the matching service. No customer was saved.", evaluation.Error);
+            var matches = evaluation.Matches!;
+            var byId = tenders.ToDictionary(t => t.Id.ToString(CultureInfo.InvariantCulture), StringComparer.Ordinal);
+            return scenario switch
+            {
+                "none" => matches.Count == 0,
+                "match" => matches.Count > 0 && matches.All(m => GetLoanDecision(customer, byId[m.TenderId]).Offer is null),
+                "offer" => matches.Any(m => GetLoanDecision(customer, byId[m.TenderId]).Offer is not null),
+                _ => throw new ArgumentException("Unknown customer scenario.", nameof(scenario))
+            };
+        }
+
         public async IAsyncEnumerable<MatchRunEvent> RunStreamingAsync(
-            [EnumeratorCancellation] CancellationToken ct)
+            [EnumeratorCancellation] CancellationToken ct, string? customerId = null)
         {
             var now = timeProvider.GetUtcNow().ToOffset(TashkentOffset).DateTime;
             var today = DateOnly.FromDateTime(now);
             var paymentCutoff = today.AddMonths(-12);
 
-            var customers = await db.Customers
+            var query = db.Customers
                 .AsNoTracking()
                 .Include(customer => customer.RiskFeatures)
                 .Include(customer => customer.Payments)
-                .AsSplitQuery()
+                .AsSplitQuery();
+            if (customerId is not null) query = query.Where(customer => customer.CustomerId == customerId);
+            var customers = await query
                 .OrderBy(customer => customer.CustomerId)
                 .ToListAsync(ct);
 
@@ -155,6 +179,7 @@ namespace TenderAI.Api.Services
             var acquired = false;
             try
             {
+                if (tenders.Count == 0) return new CustomerEvaluationResult(customer, []);
                 await semaphore.WaitAsync(ct);
                 acquired = true;
                 var industryCode = customer.IndustryCode.Trim();
@@ -230,7 +255,7 @@ namespace TenderAI.Api.Services
                 CustomerId = customer.CustomerId,
                 LotId = tender.Id.ToString(CultureInfo.InvariantCulture),
                 CreatedAt = timestamp,
-                Title = string.IsNullOrWhiteSpace(tender.Summary) ? tender.Name : tender.Summary,
+                Title = tender.EnglishTitle ?? tender.Summary ?? tender.Name,
                 Body = GetTenderBody(tender),
                 Buyer = tender.BuyerName,
                 SourceUrl = tender.SourceUrl,

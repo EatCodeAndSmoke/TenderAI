@@ -9,7 +9,7 @@ namespace TenderAI.Api.Services
         ILogger<TenderSummaryService> logger)
     {
         private const int MaxParallelTenders = 5;
-        public const int CurrentSummaryVersion = 3;
+        public const int CurrentSummaryVersion = 4;
 
         public async Task<int> SummarizeMissingTendersAsync(TenderAiDbContext db, CancellationToken ct)
         {

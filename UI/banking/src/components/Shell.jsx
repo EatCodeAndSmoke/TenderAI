@@ -5,7 +5,7 @@ import { BellIcon, LogoIcon } from './icons.jsx';
 
 // Signed-in layout: header with the bell and "Log out", then the current page
 export default function Shell() {
-  const { unreadCount, ringKey, logout } = useSession();
+  const { logout } = useSession();
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const onNotifications = pathname === '/notifications';
@@ -33,15 +33,10 @@ export default function Shell() {
           <div className="flex items-center gap-1">
             <Link
               to="/notifications"
-              aria-label={unreadCount ? `Notifications, ${unreadCount} new` : 'Notifications'}
+              aria-label="Notifications, 0 new"
               className={`relative grid size-10 place-items-center rounded-full transition-colors hover:bg-white/10 ${onNotifications ? 'bg-white/15' : ''}`}
             >
-              <BellIcon key={ringKey} className={`size-6 ${ringKey ? 'bell-ring' : ''}`} />
-              {unreadCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 grid h-5 min-w-5 place-items-center rounded-full bg-red-500 px-1 text-[11px] leading-none font-semibold text-white ring-2 ring-cobalt-top">
-                  {unreadCount}
-                </span>
-              )}
+              <BellIcon className="size-6" />
             </Link>
             <button
               type="button"

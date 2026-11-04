@@ -7,12 +7,14 @@ import { BackIcon, CheckIcon } from '../components/icons.jsx';
 
 export default function LoanPage() {
   const { lotId } = useParams();
-  const { customerId, notifications } = useSession();
+  const { customerId, matches, matchesLoading, matchesError } = useSession();
   const [sent, setSent] = useState(null);
 
-  const n = notifications.find((x) => x.lotId === lotId);
+  const n = matches.find((x) => x.lotId === lotId);
+  if (matchesLoading) return <p>Loading loan details…</p>;
+  if (matchesError) return <p role="alert">{matchesError}</p>;
   if (!n || !n.offer || (n.offer.financing <= 0 && n.offer.guarantee <= 0)) {
-    return <Navigate to="/notifications" replace />;
+    return <Navigate to="/tenders" replace />;
   }
 
   return sent
@@ -63,16 +65,13 @@ function LoanForm({ notification: n, customerId, onSent }) {
       termMonths: p.hasTerm ? Number(term) : null,
       requestedAt: new Date().toISOString()
     };
-    console.log('Loan request:', request);
-    console.log(JSON.stringify(request, null, 2));
-
     onSent(request);
   };
 
   return (
     <section>
-      <Link to="/notifications" className="inline-flex items-center gap-1.5 text-sm font-medium text-muted transition-colors hover:text-ink">
-        <BackIcon /> Notifications
+      <Link to="/tenders" className="inline-flex items-center gap-1.5 text-sm font-medium text-muted transition-colors hover:text-ink">
+        <BackIcon /> Tenders
       </Link>
       <h1 className="mt-3 text-2xl font-semibold tracking-tight">Request a loan</h1>
       <p className="mt-1 text-sm text-muted">For the tender {n.lotId}: {n.title}</p>
@@ -126,8 +125,8 @@ function LoanForm({ notification: n, customerId, onSent }) {
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-subtle px-5 py-4">
-          <p className="text-xs text-muted">A loan manager reviews every request and contacts you.</p>
-          <button type="submit" className={BTN_PRIMARY}>Send request</button>
+          <p className="text-xs text-muted">Demo only: no application will be submitted to the bank.</p>
+          <button type="submit" className={BTN_PRIMARY}>Preview request</button>
         </div>
       </form>
     </section>
@@ -142,13 +141,13 @@ function LoanSent({ notification: n, request }) {
       <span className="mx-auto grid size-12 place-items-center rounded-full bg-brand-50 text-brand-600">
         <CheckIcon className="size-6" />
       </span>
-      <h1 className="mt-4 text-xl font-semibold">Request sent</h1>
+      <h1 className="mt-4 text-xl font-semibold">Demo request prepared</h1>
       <p className="mt-2 text-sm text-muted">
-        We've received your request for {money(request.amount)} so'm of {LOAN_PRODUCTS[request.product].name.toLowerCase()} for
-        the tender {n.lotId}. A loan manager will contact you soon.
+        Your demo request for {money(request.amount)} so'm of {LOAN_PRODUCTS[request.product].name.toLowerCase()} for
+        tender {n.lotId} has not been submitted to the bank.
       </p>
       <p className="mt-4 text-xs text-muted">Request number <span className="font-medium text-ink">{number}</span></p>
-      <Link to="/notifications" className={`${BTN_PRIMARY} mt-6`}>Back to notifications</Link>
+      <Link to="/tenders" className={`${BTN_PRIMARY} mt-6`}>Back to tenders</Link>
     </div>
   );
 }

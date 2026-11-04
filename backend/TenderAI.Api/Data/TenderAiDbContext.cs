@@ -8,6 +8,7 @@ namespace TenderAI.Api.Data
         public DbSet<CustomerEntity> Customers => Set<CustomerEntity>();
         public DbSet<CustomerRiskFeaturesEntity> CustomerRiskFeatures => Set<CustomerRiskFeaturesEntity>();
         public DbSet<CustomerPaymentEntity> CustomerPayments => Set<CustomerPaymentEntity>();
+        public DbSet<CustomerAccountEntity> CustomerAccounts => Set<CustomerAccountEntity>();
         public DbSet<NotificationEntity> Notifications => Set<NotificationEntity>();
         public DbSet<TenderEntity> Tenders => Set<TenderEntity>();
         public DbSet<TenderProductEntity> TenderProducts => Set<TenderProductEntity>();
@@ -37,6 +38,10 @@ namespace TenderAI.Api.Data
                     .WithOne(p => p.Customer)
                     .HasForeignKey(p => p.CustomerId)
                     .OnDelete(DeleteBehavior.Cascade);
+                b.HasMany(c => c.Accounts)
+                    .WithOne(a => a.Customer)
+                    .HasForeignKey(a => a.CustomerId)
+                    .OnDelete(DeleteBehavior.Cascade);
                 b.HasMany(c => c.Notifications)
                     .WithOne(n => n.Customer)
                     .HasForeignKey(n => n.CustomerId)
@@ -53,6 +58,12 @@ namespace TenderAI.Api.Data
             {
                 b.ToTable("CustomerPayments");
                 b.Property(p => p.PurposeDescription).HasMaxLength(500);
+            });
+
+            modelBuilder.Entity<CustomerAccountEntity>(b =>
+            {
+                b.ToTable("CustomerAccounts");
+                b.HasIndex(a => new { a.CustomerId, a.Currency }).IsUnique();
             });
 
             modelBuilder.Entity<NotificationEntity>(b =>

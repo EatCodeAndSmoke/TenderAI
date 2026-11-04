@@ -26,15 +26,3 @@ export const BackIcon = ({ className = 'size-4' }) => (
 export const CheckIcon = ({ className = 'mt-0.5 size-4 shrink-0 text-brand-600' }) => (
   <svg {...stroke} strokeWidth="2.2" className={className}><path d="M5 12.5l4.5 4.5L19 7" /></svg>
 );
-
-export const SparkIcon = ({ className = 'mt-0.5 size-4 shrink-0 text-brand-600' }) => (
-  <svg {...stroke} strokeWidth="1.8" className={className}>
-    <path d="M12 3.5l1.8 4.7 4.7 1.8-4.7 1.8L12 16.5l-1.8-4.7L5.5 10l4.7-1.8z" />
-  </svg>
-);
-
-export const DocIcon = ({ className = 'size-4' }) => (
-  <svg {...stroke} strokeWidth="1.8" className={className}>
-    <path d="M6 3h8.5L19 7.5V21H6z" /><path d="M14 3v5h5M9 12.5h7M9 16.5h7" />
-  </svg>
-);

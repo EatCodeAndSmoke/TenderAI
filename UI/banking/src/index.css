@@ -24,15 +24,5 @@
   --color-brand-700: #08656F;
 }
 
-/* The bell rings once when there are unread notifications */
-@media (prefers-reduced-motion: no-preference) {
-  .bell-ring { animation: bell-ring 900ms ease-in-out; transform-origin: 50% 15%; }
-}
-@keyframes bell-ring {
-  0%, 100% { transform: rotate(0); }
-  15% { transform: rotate(14deg); }
-  30% { transform: rotate(-12deg); }
-  45% { transform: rotate(8deg); }
-  60% { transform: rotate(-5deg); }
-  75% { transform: rotate(2deg); }
-}
+.tender-feature { background: linear-gradient(120deg, #073d71, #078a9f 68%, #65c6ca); }
+.business-card { background: radial-gradient(circle at 85% 20%, #5bc4d7 0, transparent 40%), linear-gradient(125deg, #002c53, #087a9a); min-height: 205px; }

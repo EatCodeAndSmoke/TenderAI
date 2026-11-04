@@ -5,6 +5,7 @@ import LoginPage from './pages/LoginPage.jsx';
 import HomePage from './pages/HomePage.jsx';
 import NotificationsPage from './pages/NotificationsPage.jsx';
 import LoanPage from './pages/LoanPage.jsx';
+import TendersPage from './pages/TendersPage.jsx';
 
 // Routes: #/login, #/home, #/notifications, #/loan/<lotId>
 export default function App() {
@@ -16,6 +17,7 @@ export default function App() {
       <Route element={customerId ? <Shell /> : <Navigate to="/login" replace />}>
         <Route path="/home" element={<HomePage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
+        <Route path="/tenders" element={<TendersPage />} />
         <Route path="/loan/:lotId" element={<LoanPage />} />
         <Route path="*" element={<Navigate to="/home" replace />} />
       </Route>

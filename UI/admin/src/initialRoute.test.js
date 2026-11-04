@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { selectInitialAdminRoute } from './initialRoute.js';
 
-test('selects Tenders on page load even if the previous hash points to Customers', () => {
+test('selects Customers on page load', () => {
   const location = { pathname: '/admin/', search: '?tenant=demo', hash: '#/customers' };
   let replacement;
   const history = {
@@ -12,10 +12,10 @@ test('selects Tenders on page load even if the previous hash points to Customers
 
   const url = selectInitialAdminRoute(location, history);
 
-  assert.equal(url, '/admin/?tenant=demo#/tenders');
+  assert.equal(url, '/admin/?tenant=demo#/customers');
   assert.deepEqual(replacement, {
     state: { restore: true },
     title: '',
-    url: '/admin/?tenant=demo#/tenders'
+    url: '/admin/?tenant=demo#/customers'
   });
 });
