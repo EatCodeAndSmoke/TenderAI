@@ -31,3 +31,8 @@ export const deleteCustomer = customerId => request(`/customers/${encodeURICompo
 export const clearCustomers = () => request('/customers', { method: 'DELETE' });
 export const getTenders = () => request('/tenders?includeExpired=true');
 export const deleteTender = id => request(`/tenders/${id}`, { method: 'DELETE' });
+export const getPrompts = () => request('/prompts');
+export const updatePrompt = (key, instructions, revision) => request(`/prompts/${encodeURIComponent(key)}`, {
+  method: 'PUT',
+  body: JSON.stringify({ instructions, revision })
+});
