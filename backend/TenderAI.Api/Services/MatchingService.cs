@@ -16,13 +16,100 @@ namespace TenderAI.Api.Services
     {
         private static readonly TimeSpan TashkentOffset = TimeSpan.FromHours(5);
         private const int MaxConcurrentCustomerEvaluations = 2;
+        public const int MaxDiscoveryCount = 10;
+        private const int DiscoveryBatchSize = 5;
+        public const int MaxImportedPerSearch = 50;
+        private static readonly SemaphoreSlim DiscoveryLock = new(1, 1);
+
+        public async IAsyncEnumerable<TenderDiscoveryEvent> DiscoverAsync(
+            string customerId, int count, TenderImportService importer, [EnumeratorCancellation] CancellationToken ct)
+        {
+            if (count < 1 || count > MaxDiscoveryCount) throw new ArgumentOutOfRangeException(nameof(count));
+            await DiscoveryLock.WaitAsync(ct);
+            try
+            {
+                var now = timeProvider.GetUtcNow().ToOffset(TashkentOffset).DateTime;
+                var today = DateOnly.FromDateTime(now);
+                var customer = await db.Customers.AsNoTracking().Include(c => c.RiskFeatures).Include(c => c.Payments)
+                    .AsSplitQuery().SingleAsync(c => c.CustomerId == customerId, ct);
+                var feedback = (await db.TenderFeedback.AsNoTracking().Where(f => f.CustomerId == customerId).ToListAsync(ct))
+                    .ToDictionary(f => f.TenderId, f => f.Value);
+                var stored = await db.Tenders.AsNoTracking().Include(t => t.Products)
+                    .Where(t => !t.IsDeleted && t.EndDate >= now)
+                    .OrderBy(t => t.EndDate).ThenBy(t => t.Id).ToListAsync(ct);
+                var candidates = stored.Where(t => feedback.GetValueOrDefault(t.Id) != "dislike").ToList();
+                var matchedCount = 0;
+                var importedCount = 0;
+                var limited = false;
+                yield return new TenderDiscoveryEvent("started", Count: count);
+                if (!customer.Payments.Any(p => p.IsIncoming && p.Date >= today.AddMonths(-12)
+                    && p.Date <= today && !string.IsNullOrWhiteSpace(p.PurposeDescription)))
+                {
+                    yield return new TenderDiscoveryEvent("completed", Count: 0);
+                    yield break;
+                }
+                using var semaphore = new SemaphoreSlim(1);
+                while (matchedCount < count)
+                {
+                    if (candidates.Count == 0)
+                    {
+                        if (importedCount >= MaxImportedPerSearch) { limited = true; break; }
+                        var loaded = await importer.LoadNewAsync(Math.Min(DiscoveryBatchSize, MaxImportedPerSearch - importedCount), ct);
+                        if (loaded.Count == 0) break;
+                        importedCount += loaded.Count;
+                        candidates.AddRange(loaded.Where(t => !t.IsDeleted && t.EndDate >= now
+                            && feedback.GetValueOrDefault(t.Id) != "dislike"));
+                        if (candidates.Count == 0) continue;
+                    }
+                    var batch = candidates.Take(DiscoveryBatchSize).ToList();
+                    candidates.RemoveRange(0, batch.Count);
+                    var evaluation = await EvaluateCustomerAsync(customer, batch.Select(ToTenderEvidence).ToList(),
+                        today.AddMonths(-12), today, semaphore, ct);
+                    if (evaluation.Error is not null)
+                        throw new TenderMatchEvaluationException("The tender search could not be completed.", evaluation.Error);
+                    var byId = batch.ToDictionary(t => t.Id.ToString(CultureInfo.InvariantCulture), StringComparer.Ordinal);
+                    foreach (var match in evaluation.Matches!)
+                    {
+                        var tender = byId[match.TenderId];
+                        if (string.IsNullOrWhiteSpace(tender.Summary) || string.IsNullOrWhiteSpace(tender.EnglishTitle))
+                        {
+                            await importer.RefreshSummaryAsync(tender, ct);
+                            if (string.IsNullOrWhiteSpace(tender.Summary) || string.IsNullOrWhiteSpace(tender.EnglishTitle))
+                                throw new TenderMatchEvaluationException("A matching tender could not be summarized. Check the Bedrock configuration.");
+                        }
+                        var notification = CreateNotification(customer, tender, match.Reason, timeProvider.GetUtcNow().UtcDateTime);
+                        string? currentFeedback;
+                        await using (var transaction = await db.Database.BeginTransactionAsync(ct))
+                        {
+                            if (!await db.Tenders.AsNoTracking().AnyAsync(t => t.Id == tender.Id && !t.IsDeleted, ct))
+                                continue;
+                            currentFeedback = await db.TenderFeedback.AsNoTracking()
+                                .Where(f => f.CustomerId == customerId && f.TenderId == tender.Id)
+                                .Select(f => f.Value).SingleOrDefaultAsync(ct);
+                            if (currentFeedback == "dislike") continue;
+                            await db.Notifications.Where(n => n.CustomerId == customerId && n.LotId == match.TenderId).ExecuteDeleteAsync(ct);
+                            db.Notifications.Add(notification);
+                            await db.SaveChangesAsync(ct);
+                            await transaction.CommitAsync(ct);
+                        }
+                        matchedCount++;
+                        yield return new TenderDiscoveryEvent("match", matchedCount,
+                            tender.ToDto(), notification.ToDto(tender.EnglishTitle) with { Feedback = currentFeedback });
+                        if (matchedCount == count) break;
+                    }
+                    yield return new TenderDiscoveryEvent("progress", matchedCount, Imported: importedCount);
+                }
+                yield return new TenderDiscoveryEvent("completed", matchedCount, Imported: importedCount, Limited: limited);
+            }
+            finally { DiscoveryLock.Release(); }
+        }
 
         public async Task<bool> VerifyScenarioAsync(CustomerEntity customer, string scenario, CancellationToken ct)
         {
             var now = timeProvider.GetUtcNow().ToOffset(TashkentOffset).DateTime;
             var today = DateOnly.FromDateTime(now);
             var tenders = await db.Tenders.AsNoTracking().Include(t => t.Products)
-                .Where(t => t.EndDate >= now).ToListAsync(ct);
+                .Where(t => !t.IsDeleted && t.EndDate >= now).ToListAsync(ct);
             using var semaphore = new SemaphoreSlim(1);
             var evaluation = await EvaluateCustomerAsync(
                 customer, tenders.Select(ToTenderEvidence).ToList(), today.AddMonths(-12), today, semaphore, ct);
@@ -59,7 +146,7 @@ namespace TenderAI.Api.Services
             var storedTenders = await db.Tenders
                 .AsNoTracking()
                 .Include(tender => tender.Products)
-                .Where(tender => tender.EndDate >= now)
+                .Where(tender => !tender.IsDeleted && tender.EndDate >= now)
                 .OrderBy(tender => tender.EndDate)
                 .ThenBy(tender => tender.Id)
                 .ToListAsync(ct);
@@ -438,4 +525,7 @@ namespace TenderAI.Api.Services
         IReadOnlyList<MatchDto>? Matches = null,
         string? Error = null);
 
+    public sealed record TenderDiscoveryEvent(
+        string Type, int Count = 0, TenderDto? Tender = null, NotificationDto? Match = null,
+        int Imported = 0, bool Limited = false);
 }

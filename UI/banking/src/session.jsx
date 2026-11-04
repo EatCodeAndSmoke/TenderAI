@@ -37,10 +37,12 @@ export function SessionProvider({ children }) {
   }, [customer, refreshMatches]);
   const login = useCallback(value => { currentId.current = value.customerId; setMatches([]); setMatchesLoading(true); setCustomer(value); }, []);
   const logout = useCallback(() => { currentId.current = null; setCustomer(null); setMatches([]); setMatchesError(''); }, []);
+  const rememberMatch = useCallback(match => setMatches(previous => [...previous.filter(m => m.lotId !== match.lotId), match]), []);
+  const forgetMatch = useCallback(lotId => setMatches(previous => previous.filter(m => m.lotId !== lotId)), []);
   const value = useMemo(() => ({
     customerId: customer?.customerId ?? null, customerName: customer?.name ?? '',
-    matches, matchesLoading, matchesError, refreshMatches, login, logout
-  }), [customer, matches, matchesLoading, matchesError, refreshMatches, login, logout]);
+    matches, matchesLoading, matchesError, refreshMatches, rememberMatch, forgetMatch, login, logout
+  }), [customer, matches, matchesLoading, matchesError, refreshMatches, rememberMatch, forgetMatch, login, logout]);
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }
 export const useSession = () => useContext(SessionContext);

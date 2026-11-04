@@ -70,6 +70,7 @@
         public string? EnglishTitle { get; set; }
         public int? SummaryVersion { get; set; }
         public string? SummaryError { get; set; }
+        public bool IsDeleted { get; set; }
 
         public List<TenderProductEntity> Products { get; set; } = [];
     }

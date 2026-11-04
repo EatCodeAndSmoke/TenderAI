@@ -14,9 +14,9 @@ namespace TenderAI.Api.Services
         public async Task<int> SummarizeMissingTendersAsync(TenderAiDbContext db, CancellationToken ct)
         {
             var tenders = await db.Tenders
-                .Where(tender => tender.Summary == null
+                .Where(tender => !tender.IsDeleted && (tender.Summary == null
                     || tender.Summary == ""
-                    || tender.SummaryVersion != CurrentSummaryVersion)
+                    || tender.SummaryVersion != CurrentSummaryVersion))
                 .Include(tender => tender.Products)
                 .AsSplitQuery()
                 .ToListAsync(ct);

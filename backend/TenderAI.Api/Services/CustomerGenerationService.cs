@@ -45,7 +45,7 @@ namespace TenderAI.Api.Services
             var storedTenders = await db.Tenders
                 .AsNoTracking()
                 .Include(tender => tender.Products)
-                .Where(tender => tender.EndDate >= now)
+                .Where(tender => !tender.IsDeleted && tender.EndDate >= now)
                 .Where(t => t.Summary != null && t.Summary != "")
                 .ToListAsync(ct);
             var tenders = storedTenders

@@ -29,3 +29,5 @@ export const getCustomers = () => request('/customers');
 export const generateCustomer = scenario => request(`/customers/generate?scenario=${encodeURIComponent(scenario)}`, { method: 'POST' });
 export const deleteCustomer = customerId => request(`/customers/${encodeURIComponent(customerId)}`, { method: 'DELETE' });
 export const clearCustomers = () => request('/customers', { method: 'DELETE' });
+export const getTenders = () => request('/tenders?includeExpired=true');
+export const deleteTender = id => request(`/tenders/${id}`, { method: 'DELETE' });

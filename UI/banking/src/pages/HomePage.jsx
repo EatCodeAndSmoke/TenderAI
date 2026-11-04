@@ -1,17 +1,18 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { getAccounts } from '../api.js';
+import { getCustomer } from '../api.js';
 import { money } from '../format.js';
 import { useSession } from '../session.jsx';
 
 export default function HomePage() {
   const { customerId, customerName } = useSession();
-  const [accounts, setAccounts] = useState([]);
+  const [profile, setProfile] = useState(null);
+  const [slide, setSlide] = useState(0);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     let active = true;
-    getAccounts(customerId).then(data => { if (active) setAccounts(data); })
+    getCustomer(customerId).then(data => { if (active) setProfile(data); })
       .catch(err => { if (active) setError(err.message); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
@@ -21,22 +22,34 @@ export default function HomePage() {
     <h1 className="text-2xl font-semibold tracking-tight">{customerName}</h1>
     <p className="mt-1 text-sm text-muted">Your business, all in one place.</p>
 
-    <Link to="/tenders" className="tender-feature mt-6 block overflow-hidden rounded-3xl p-6 text-white shadow-lg transition hover:-translate-y-0.5">
+    <div className="tender-feature mt-6 overflow-hidden rounded-3xl p-6 text-white shadow-lg" aria-roledescription="carousel" aria-label="Business banking features">
       <div className="flex items-start justify-between gap-4">
-        <div><span className="rounded-full bg-white/20 px-3 py-1 text-xs font-semibold">✦ NEW FOR YOUR BUSINESS</span>
-          <h2 className="mt-5 text-2xl font-semibold">Discover your next opportunity</h2>
-          <p className="mt-2 max-w-md text-sm text-white/85">Explore open tenders and find opportunities matched to your business with AI.</p>
-          <span className="mt-5 inline-block rounded-xl bg-white px-4 py-2 text-sm font-semibold text-cobalt">Explore tenders →</span>
+        <div><span className="rounded-full bg-white/20 px-3 py-1 text-xs font-semibold">{slide === 0 ? '✦ NEW FOR YOUR BUSINESS' : 'BUSINESS BANKING'}</span>
+          <h2 className="mt-5 text-2xl font-semibold">{slide === 0 ? 'Discover your next opportunity' : 'Everything your business needs'}</h2>
+          <p className="mt-2 max-w-md text-sm text-white/85">{slide === 0 ? 'Explore open tenders and find opportunities matched to your business with AI.' : 'From everyday payments to new opportunities, discover the features built for your business.'}</p>
+          {slide === 0 && <Link to="/tenders" className="mt-5 inline-block rounded-xl bg-white px-4 py-2 text-sm font-semibold text-cobalt">Explore tenders →</Link>}
         </div><span aria-hidden="true" className="hidden text-6xl text-white/50 sm:block">✧</span>
       </div>
-    </Link>
+      <div className="mt-5 flex gap-2" role="group" aria-label="Choose feature">
+        <button type="button" onClick={() => setSlide(0)} aria-label="Show tender feature" aria-pressed={slide === 0} className="h-2 w-8 rounded-full bg-white/40 aria-pressed:bg-white" />
+        <button type="button" onClick={() => setSlide(1)} aria-label="Show banking features" aria-pressed={slide === 1} className="h-2 w-8 rounded-full bg-white/40 aria-pressed:bg-white" />
+      </div>
+    </div>
 
-    <div className="mt-8 flex items-center justify-between"><h2 className="text-lg font-semibold">Accounts</h2><span className="text-xs text-muted">Multicurrency account</span></div>
+    <div className="mt-8 flex items-center justify-between"><h2 className="text-lg font-semibold">Business profile</h2><span className="text-xs text-muted">Customer activity</span></div>
     <div className="mt-3 rounded-2xl border border-line bg-white p-5 shadow-sm">
-      {loading ? <p className="text-sm text-muted">Loading accounts…</p> : error ? <p role="alert" className="text-sm text-red-700">{error}</p> : <>
-        <p className="text-xs text-muted">IBAN · Demo account</p><p className="mt-1 break-all font-mono text-sm">{accounts[0]?.iban}</p>
-        <div className="mt-5 grid gap-3 sm:grid-cols-3">{accounts.map(a => <div key={a.currency} className="rounded-xl bg-subtle p-4"><p className="text-xs text-muted">{a.currency} balance</p><p className="mt-1 text-lg font-semibold tabular-nums">{money(a.balance.toFixed(2))} <span className="text-xs font-medium text-muted">{a.currency}</span></p></div>)}</div>
+      {loading ? <p className="text-sm text-muted">Loading business profile…</p> : error ? <p role="alert" className="text-sm text-red-700">{error}</p> : profile && <>
+        <p className="text-xs text-muted">OKED {profile.customer.industry.industryCode}</p><p className="mt-1 font-medium">{profile.customer.industry.name}</p>
       </>}
+    </div>
+    <h2 className="mt-8 text-lg font-semibold">Recent payments</h2>
+    <div className="mt-3 divide-y divide-line rounded-2xl border border-line bg-white shadow-sm">
+      {loading ? <p className="p-5 text-sm text-muted">Loading payments…</p> : error ? <p className="p-5 text-sm text-muted">Payments unavailable.</p> :
+        !profile?.recentPayments.length ? <p className="p-5 text-sm text-muted">No recent payments.</p> : profile.recentPayments.map((payment, index) =>
+          <div key={`${payment.date}-${index}`} className="flex items-start justify-between gap-4 p-4">
+            <div><p className="text-sm font-medium">{payment.purposeDescription}</p><p className="mt-1 text-xs text-muted">{payment.date} · {payment.isIncoming ? 'Incoming' : 'Outgoing'}</p></div>
+            <p className="whitespace-nowrap text-sm font-semibold">{payment.amount == null ? '—' : `${payment.isIncoming ? '+' : '−'}${money(payment.amount)} UZS`}</p>
+          </div>)}
     </div>
     <div className="mt-8 grid gap-5 sm:grid-cols-2">
       <div><h2 className="mb-3 text-lg font-semibold">Cards</h2>

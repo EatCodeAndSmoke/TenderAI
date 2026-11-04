@@ -17,7 +17,8 @@ namespace TenderAI.Api.Contracts
         IReadOnlyList<string> Requirements,
         string MatchReason,
         string LoanDecisionReason,
-        LoanOfferDto? Offer);
+        LoanOfferDto? Offer,
+        string? Feedback = null);
 
     public record LoanOfferDto(long Financing, long Guarantee, long PreApprovedLimit);
 

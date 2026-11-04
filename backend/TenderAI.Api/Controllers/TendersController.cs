@@ -18,11 +18,11 @@ namespace TenderAI.Api.Controllers
         // GET api/tenders
         // Nearest deadline first
         [HttpGet]
-        public async Task<ActionResult<IEnumerable<TenderDto>>> GetAll(CancellationToken ct)
+        public async Task<ActionResult<IEnumerable<TenderDto>>> GetAll(CancellationToken ct, [FromQuery] bool includeExpired = false)
         {
             var tenders = await db.Tenders
                 .AsNoTracking()
-                .Where(t => t.EndDate >= DateTime.UtcNow.AddHours(5))
+                .Where(t => !t.IsDeleted && (includeExpired || t.EndDate >= DateTime.UtcNow.AddHours(5)))
                 .OrderBy(t => t.EndDate)
                 .ThenBy(t => t.Id)
                 .ToListAsync(ct);
@@ -34,7 +34,7 @@ namespace TenderAI.Api.Controllers
         [HttpGet("{id:long}")]
         public async Task<ActionResult<TenderDto>> Get(long id, CancellationToken ct)
         {
-            var tender = await db.Tenders.AsNoTracking().FirstOrDefaultAsync(t => t.Id == id, ct);
+            var tender = await db.Tenders.AsNoTracking().FirstOrDefaultAsync(t => t.Id == id && !t.IsDeleted, ct);
             return tender is null ? NotFound() : tender.ToDto();
         }
 
@@ -108,6 +108,20 @@ namespace TenderAI.Api.Controllers
             }
         }
 
+        [HttpDelete("{id:long}")]
+        public async Task<IActionResult> Delete(long id, CancellationToken ct)
+        {
+            var tender = await db.Tenders.FirstOrDefaultAsync(t => t.Id == id && !t.IsDeleted, ct);
+            if (tender is null) return NotFound();
+            await using var transaction = await db.Database.BeginTransactionAsync(ct);
+            await db.Notifications.Where(n => n.LotId == id.ToString()).ExecuteDeleteAsync(ct);
+            await db.TenderFeedback.Where(f => f.TenderId == id).ExecuteDeleteAsync(ct);
+            tender.IsDeleted = true;
+            await db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+            return NoContent();
+        }
+
         // DELETE api/tenders
         // Removes every tender and product, along with matching notifications that refer to them.
         [HttpDelete]
@@ -115,8 +129,8 @@ namespace TenderAI.Api.Controllers
         {
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
             await db.Notifications.ExecuteDeleteAsync(ct);
-            await db.TenderProducts.ExecuteDeleteAsync(ct);
-            await db.Tenders.ExecuteDeleteAsync(ct);
+            await db.TenderFeedback.ExecuteDeleteAsync(ct);
+            await db.Tenders.Where(t => !t.IsDeleted).ExecuteUpdateAsync(setters => setters.SetProperty(t => t.IsDeleted, true), ct);
             await transaction.CommitAsync(ct);
 
             return NoContent();

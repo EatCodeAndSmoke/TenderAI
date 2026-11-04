@@ -12,6 +12,7 @@ namespace TenderAI.Api.Data
         public DbSet<NotificationEntity> Notifications => Set<NotificationEntity>();
         public DbSet<TenderEntity> Tenders => Set<TenderEntity>();
         public DbSet<TenderProductEntity> TenderProducts => Set<TenderProductEntity>();
+        public DbSet<TenderFeedbackEntity> TenderFeedback => Set<TenderFeedbackEntity>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -104,6 +105,15 @@ namespace TenderAI.Api.Data
                 b.Property(p => p.ProductCode).HasMaxLength(30);
                 b.Property(p => p.TechnicalSpecifications);
                 b.HasIndex(p => p.ProductCode);
+            });
+
+            modelBuilder.Entity<TenderFeedbackEntity>(b =>
+            {
+                b.ToTable("TenderFeedback");
+                b.HasKey(f => new { f.CustomerId, f.TenderId });
+                b.Property(f => f.Value).HasMaxLength(7);
+                b.HasOne<CustomerEntity>().WithMany().HasForeignKey(f => f.CustomerId).OnDelete(DeleteBehavior.Cascade);
+                b.HasOne<TenderEntity>().WithMany().HasForeignKey(f => f.TenderId).OnDelete(DeleteBehavior.Cascade);
             });
         }
     }

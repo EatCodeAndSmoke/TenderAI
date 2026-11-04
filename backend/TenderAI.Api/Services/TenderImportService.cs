@@ -31,6 +31,18 @@ namespace TenderAI.Api.Services
             return loaded;
         }
 
+        public async Task RefreshSummaryAsync(TenderEntity tender, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(tender.EnglishTitle)) tender.SummaryVersion = null;
+            await summarizer.SummarizeTendersAsync([tender], ct);
+            await db.Tenders.Where(t => t.Id == tender.Id && !t.IsDeleted)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(t => t.Summary, tender.Summary)
+                    .SetProperty(t => t.EnglishTitle, tender.EnglishTitle)
+                    .SetProperty(t => t.SummaryVersion, tender.SummaryVersion)
+                    .SetProperty(t => t.SummaryError, tender.SummaryError), ct);
+        }
+
         public async IAsyncEnumerable<TenderEntity> LoadNewStreamingAsync(int count, [EnumeratorCancellation] CancellationToken ct)
         {
             count = Math.Clamp(count, 1, MaxTendersPerLoad);
