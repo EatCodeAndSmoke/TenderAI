@@ -2,6 +2,7 @@ import Sidebar from './components/Sidebar.jsx';
 import Toast, { useToast } from './components/Toast.jsx';
 import CustomersPage from './pages/CustomersPage.jsx';
 import TendersPage from './pages/TendersPage.jsx';
+import PromptsPage from './pages/PromptsPage.jsx';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 export default function App() {
@@ -13,6 +14,7 @@ export default function App() {
         <div className="mx-auto max-w-6xl"><Routes>
           <Route path="/customers" element={<CustomersPage onToast={showToast} />} />
           <Route path="/tenders" element={<TendersPage onToast={showToast} />} />
+          <Route path="/prompts" element={<PromptsPage onToast={showToast} />} />
           <Route path="*" element={<Navigate to="/customers" replace />} />
         </Routes></div>
       </main>

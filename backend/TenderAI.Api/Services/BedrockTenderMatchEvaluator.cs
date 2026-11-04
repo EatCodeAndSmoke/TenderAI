@@ -11,6 +11,7 @@ namespace TenderAI.Api.Services
     public sealed class BedrockTenderMatchEvaluator(
         IAmazonBedrockRuntime bedrock,
         IOptions<BedrockOptions> options,
+        PromptSettings prompts,
         ILogger<BedrockTenderMatchEvaluator> logger) : ITenderMatchEvaluator
     {
         private const int MaxInvocationAttempts = 4;
@@ -31,6 +32,7 @@ namespace TenderAI.Api.Services
             IReadOnlyCollection<TenderMatchEvidence> tenders,
             CancellationToken ct)
         {
+            var instructions = await prompts.GetInstructionsAsync(PromptDefinitions.Matching, ct);
             var requestBody = JsonSerializer.Serialize(new
             {
                 schemaVersion = "messages-v1",
@@ -41,7 +43,7 @@ namespace TenderAI.Api.Services
                         role = "user",
                         content = new[]
                         {
-                            new { text = TenderMatchPrompt.Build(customer, tenders) }
+                            new { text = TenderMatchPrompt.Build(customer, tenders, instructions) }
                         }
                     }
                 },

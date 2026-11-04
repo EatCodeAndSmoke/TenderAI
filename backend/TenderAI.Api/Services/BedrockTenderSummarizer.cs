@@ -9,10 +9,12 @@ namespace TenderAI.Api.Services
 {
     public sealed class BedrockTenderSummarizer(
         IAmazonBedrockRuntime bedrock,
-        IOptions<BedrockOptions> options) : ITenderSummarizer
+        IOptions<BedrockOptions> options,
+        PromptSettings prompts) : ITenderSummarizer
     {
         public async Task<string> SummarizeAsync(TenderEntity tender, CancellationToken ct)
         {
+            var instructions = await prompts.GetInstructionsAsync(PromptDefinitions.Summarization, ct);
             var requestBody = JsonSerializer.Serialize(new
             {
                 schemaVersion = "messages-v1",
@@ -21,7 +23,7 @@ namespace TenderAI.Api.Services
                     new
                     {
                         role = "user",
-                        content = new[] { new { text = TenderSummaryPrompt.Build(tender) } }
+                        content = new[] { new { text = TenderSummaryPrompt.Build(tender, instructions) } }
                     }
                 },
                 inferenceConfig = new

@@ -19,3 +19,9 @@ export const BuildingIcon = ({ className = 'size-5 shrink-0' }) => (
     <path d="M9 7.5h1.5M13.5 7.5H15M9 11.5h1.5M13.5 11.5H15M9 15.5h1.5M13.5 15.5H15M10.5 21v-2.5h3V21" />
   </svg>
 );
+
+export const PromptIcon = ({ className = 'size-5 shrink-0' }) => (
+  <svg {...stroke} strokeWidth="1.6" className={className}>
+    <path d="M5 3.5h10l4 4V20.5H5zM15 3.5v4h4M8 11h8M8 14.5h8M8 18h5" />
+  </svg>
+);

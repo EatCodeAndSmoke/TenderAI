@@ -29,6 +29,7 @@ builder.Services.AddHttpClient<UzexClient>((services, http) =>
 builder.Services.AddScoped<TenderImportService>();
 builder.Services.AddScoped<CustomerGenerationService>();
 builder.Services.AddScoped<MatchingService>();
+builder.Services.AddSingleton<PromptSettings>();
 builder.Services.AddSingleton<ITenderMatchEvaluator, BedrockTenderMatchEvaluator>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IAmazonBedrockRuntime>(services =>

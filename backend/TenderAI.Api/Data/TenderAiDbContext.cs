@@ -13,6 +13,7 @@ namespace TenderAI.Api.Data
         public DbSet<TenderEntity> Tenders => Set<TenderEntity>();
         public DbSet<TenderProductEntity> TenderProducts => Set<TenderProductEntity>();
         public DbSet<TenderFeedbackEntity> TenderFeedback => Set<TenderFeedbackEntity>();
+        public DbSet<PromptSettingEntity> PromptSettings => Set<PromptSettingEntity>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -114,6 +115,15 @@ namespace TenderAI.Api.Data
                 b.Property(f => f.Value).HasMaxLength(7);
                 b.HasOne<CustomerEntity>().WithMany().HasForeignKey(f => f.CustomerId).OnDelete(DeleteBehavior.Cascade);
                 b.HasOne<TenderEntity>().WithMany().HasForeignKey(f => f.TenderId).OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<PromptSettingEntity>(b =>
+            {
+                b.ToTable("PromptSettings");
+                b.HasKey(p => p.Key);
+                b.Property(p => p.Key).HasMaxLength(30);
+                b.Property(p => p.Instructions).HasMaxLength(PromptSettingEntity.MaximumLength);
+                b.Property(p => p.Revision).IsConcurrencyToken();
             });
         }
     }
