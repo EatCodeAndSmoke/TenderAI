@@ -14,6 +14,7 @@ namespace TenderAI.Api.Data
         public DbSet<TenderProductEntity> TenderProducts => Set<TenderProductEntity>();
         public DbSet<TenderFeedbackEntity> TenderFeedback => Set<TenderFeedbackEntity>();
         public DbSet<TenderApplicationEntity> TenderApplications => Set<TenderApplicationEntity>();
+        public DbSet<TenderDiscoverySeenEntity> TenderDiscoverySeen => Set<TenderDiscoverySeenEntity>();
         public DbSet<PromptSettingEntity> PromptSettings => Set<PromptSettingEntity>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -124,6 +125,14 @@ namespace TenderAI.Api.Data
                 b.HasKey(a => new { a.CustomerId, a.TenderId });
                 b.HasOne<CustomerEntity>().WithMany().HasForeignKey(a => a.CustomerId).OnDelete(DeleteBehavior.Cascade);
                 b.HasOne<TenderEntity>().WithMany().HasForeignKey(a => a.TenderId).OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<TenderDiscoverySeenEntity>(b =>
+            {
+                b.ToTable("TenderDiscoverySeen");
+                b.HasKey(s => new { s.CustomerId, s.TenderId });
+                b.HasOne<CustomerEntity>().WithMany().HasForeignKey(s => s.CustomerId).OnDelete(DeleteBehavior.Cascade);
+                b.HasOne<TenderEntity>().WithMany().HasForeignKey(s => s.TenderId).OnDelete(DeleteBehavior.Cascade);
             });
 
             modelBuilder.Entity<PromptSettingEntity>(b =>

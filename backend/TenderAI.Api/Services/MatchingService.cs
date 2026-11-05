@@ -22,12 +22,22 @@ namespace TenderAI.Api.Services
         public const int MaxImportedPerSearch = 50;
         private static readonly SemaphoreSlim DiscoveryLock = new(1, 1);
 
+        public static async Task<IDisposable> LockDiscoveryAsync(CancellationToken ct)
+        {
+            await DiscoveryLock.WaitAsync(ct);
+            return new DiscoveryLockReleaser();
+        }
+
+        private sealed class DiscoveryLockReleaser : IDisposable
+        {
+            public void Dispose() => DiscoveryLock.Release();
+        }
+
         public async IAsyncEnumerable<TenderDiscoveryEvent> DiscoverAsync(
             string customerId, int count, TenderImportService importer, [EnumeratorCancellation] CancellationToken ct)
         {
             if (count < 1 || count > MaxDiscoveryCount) throw new ArgumentOutOfRangeException(nameof(count));
-            await DiscoveryLock.WaitAsync(ct);
-            try
+            using (await LockDiscoveryAsync(ct))
             {
                 var now = timeProvider.GetUtcNow().ToOffset(TashkentOffset).DateTime;
                 var today = DateOnly.FromDateTime(now);
@@ -35,10 +45,16 @@ namespace TenderAI.Api.Services
                     .AsSplitQuery().SingleAsync(c => c.CustomerId == customerId, ct);
                 var feedback = (await db.TenderFeedback.AsNoTracking().Where(f => f.CustomerId == customerId).ToListAsync(ct))
                     .ToDictionary(f => f.TenderId, f => f.Value);
+                var seen = (await db.TenderDiscoverySeen.AsNoTracking().Where(s => s.CustomerId == customerId)
+                    .Select(s => s.TenderId).ToListAsync(ct)).ToHashSet();
+                var savedLots = await db.Notifications.AsNoTracking().Where(n => n.CustomerId == customerId)
+                    .Select(n => n.LotId).ToListAsync(ct);
+                foreach (var lot in savedLots)
+                    if (long.TryParse(lot, NumberStyles.None, CultureInfo.InvariantCulture, out var id)) seen.Add(id);
                 var stored = await db.Tenders.AsNoTracking().Include(t => t.Products)
                     .Where(t => !t.IsDeleted && t.EndDate >= now)
                     .OrderBy(t => t.EndDate).ThenBy(t => t.Id).ToListAsync(ct);
-                var candidates = stored.Where(t => feedback.GetValueOrDefault(t.Id) != "dislike").ToList();
+                var candidates = stored.Where(t => !seen.Contains(t.Id) && feedback.GetValueOrDefault(t.Id) != "dislike").ToList();
                 var matchedCount = 0;
                 var importedCount = 0;
                 var limited = false;
@@ -59,7 +75,7 @@ namespace TenderAI.Api.Services
                         if (loaded.Count == 0) break;
                         importedCount += loaded.Count;
                         candidates.AddRange(loaded.Where(t => !t.IsDeleted && t.EndDate >= now
-                            && feedback.GetValueOrDefault(t.Id) != "dislike"));
+                            && !seen.Contains(t.Id) && feedback.GetValueOrDefault(t.Id) != "dislike"));
                         if (candidates.Count == 0) continue;
                     }
                     var batch = candidates.Take(DiscoveryBatchSize).ToList();
@@ -68,17 +84,17 @@ namespace TenderAI.Api.Services
                         today.AddMonths(-12), today, semaphore, ct);
                     if (evaluation.Error is not null)
                         throw new TenderMatchEvaluationException("The tender search could not be completed.", evaluation.Error);
-                    var byId = batch.ToDictionary(t => t.Id.ToString(CultureInfo.InvariantCulture), StringComparer.Ordinal);
-                    foreach (var match in evaluation.Matches!)
+                    var matches = evaluation.Matches!.ToDictionary(match => match.TenderId, StringComparer.Ordinal);
+                    foreach (var tender in batch)
                     {
-                        var tender = byId[match.TenderId];
-                        if (string.IsNullOrWhiteSpace(tender.Summary) || string.IsNullOrWhiteSpace(tender.EnglishTitle))
+                        matches.TryGetValue(tender.Id.ToString(CultureInfo.InvariantCulture), out var match);
+                        if (match is not null && (string.IsNullOrWhiteSpace(tender.Summary) || string.IsNullOrWhiteSpace(tender.EnglishTitle)))
                         {
                             await importer.RefreshSummaryAsync(tender, ct);
                             if (string.IsNullOrWhiteSpace(tender.Summary) || string.IsNullOrWhiteSpace(tender.EnglishTitle))
                                 throw new TenderMatchEvaluationException("A matching tender could not be summarized. Check the Bedrock configuration.");
                         }
-                        var notification = CreateNotification(customer, tender, match.Reason, timeProvider.GetUtcNow().UtcDateTime);
+                        var notification = match is null ? null : CreateNotification(customer, tender, match.Reason, timeProvider.GetUtcNow().UtcDateTime);
                         string? currentFeedback;
                         DateTime? appliedAt;
                         await using (var transaction = await db.Database.BeginTransactionAsync(ct))
@@ -89,14 +105,20 @@ namespace TenderAI.Api.Services
                                 .Where(f => f.CustomerId == customerId && f.TenderId == tender.Id)
                                 .Select(f => f.Value).SingleOrDefaultAsync(ct);
                             if (currentFeedback == "dislike") continue;
+                            var marker = new TenderDiscoverySeenEntity { CustomerId = customerId, TenderId = tender.Id };
+                            db.TenderDiscoverySeen.Add(marker);
                             appliedAt = await db.TenderApplications.AsNoTracking()
                                 .Where(a => a.CustomerId == customerId && a.TenderId == tender.Id)
                                 .Select(a => (DateTime?)a.AppliedAt).SingleOrDefaultAsync(ct);
-                            await db.Notifications.Where(n => n.CustomerId == customerId && n.LotId == match.TenderId).ExecuteDeleteAsync(ct);
-                            db.Notifications.Add(notification);
+                            if (notification is not null && await db.Notifications.AsNoTracking()
+                                .AnyAsync(n => n.CustomerId == customerId && n.LotId == match!.TenderId, ct))
+                                notification = null;
+                            if (notification is not null) db.Notifications.Add(notification);
                             await db.SaveChangesAsync(ct);
                             await transaction.CommitAsync(ct);
+                            db.Entry(marker).State = EntityState.Detached;
                         }
+                        if (notification is null) continue;
                         matchedCount++;
                         yield return new TenderDiscoveryEvent("match", matchedCount,
                             tender.ToDto(), notification.ToDto(tender.EnglishTitle) with
@@ -110,7 +132,6 @@ namespace TenderAI.Api.Services
                 }
                 yield return new TenderDiscoveryEvent("completed", matchedCount, Imported: importedCount, Limited: limited);
             }
-            finally { DiscoveryLock.Release(); }
         }
 
         public async IAsyncEnumerable<MatchRunEvent> RunStreamingAsync(
@@ -187,8 +208,10 @@ namespace TenderAI.Api.Services
                 try
                 {
                     await using var transaction = await db.Database.BeginTransactionAsync(ct);
+                    var notificationLots = notifications.Select(n => n.LotId).ToArray();
                     await db.Notifications
-                        .Where(notification => notification.CustomerId == evaluation.Customer.CustomerId)
+                        .Where(notification => notification.CustomerId == evaluation.Customer.CustomerId
+                            && notificationLots.Contains(notification.LotId))
                         .ExecuteDeleteAsync(ct);
                     db.Notifications.AddRange(notifications);
                     await db.SaveChangesAsync(ct);

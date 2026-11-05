@@ -40,6 +40,7 @@ export const authenticate = (customerId, password) =>
 
 export const getCustomer = customerId => request(`/customers/${encodeURIComponent(customerId)}`);
 export const getMatches = customerId => request(`/customers/${encodeURIComponent(customerId)}/matches`);
+export const getDiscoveries = customerId => request(`/customers/${encodeURIComponent(customerId)}/discoveries`);
 export const setFeedback = (customerId, tenderId, value) =>
   request(`/customers/${encodeURIComponent(customerId)}/tenders/${tenderId}/feedback`, { method: 'PUT', body: JSON.stringify({ value }) });
 export const applyForTender = (customerId, tenderId) =>

@@ -104,11 +104,15 @@ namespace TenderAI.Api.Controllers
                 return ValidationProblem(ModelState);
             }
 
+            using var discoveryLock = await MatchingService.LockDiscoveryAsync(ct);
             var customer = await FindAsync(customerId, ct, tracking: true);
             if (customer is null) return NotFound();
 
+            await using var transaction = await db.Database.BeginTransactionAsync(ct);
             customer.ApplyFrom(request);
             await db.SaveChangesAsync(ct);
+            await db.TenderDiscoverySeen.Where(s => s.CustomerId == customerId).ExecuteDeleteAsync(ct);
+            await transaction.CommitAsync(ct);
 
             return customer.ToDto(Today);
         }
@@ -120,10 +124,12 @@ namespace TenderAI.Api.Controllers
         {
             customerId = NormalizeId(customerId);
 
+            using var discoveryLock = await MatchingService.LockDiscoveryAsync(ct);
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
             await db.Notifications.Where(n => n.CustomerId == customerId).ExecuteDeleteAsync(ct);
             await db.TenderFeedback.Where(f => f.CustomerId == customerId).ExecuteDeleteAsync(ct);
             await db.TenderApplications.Where(a => a.CustomerId == customerId).ExecuteDeleteAsync(ct);
+            await db.TenderDiscoverySeen.Where(s => s.CustomerId == customerId).ExecuteDeleteAsync(ct);
             await db.CustomerAccounts.Where(a => a.CustomerId == customerId).ExecuteDeleteAsync(ct);
             await db.CustomerPayments.Where(p => p.CustomerId == customerId).ExecuteDeleteAsync(ct);
             await db.CustomerRiskFeatures.Where(r => r.CustomerId == customerId).ExecuteDeleteAsync(ct);
@@ -139,10 +145,12 @@ namespace TenderAI.Api.Controllers
         [HttpDelete]
         public async Task<IActionResult> Clear(CancellationToken ct)
         {
+            using var discoveryLock = await MatchingService.LockDiscoveryAsync(ct);
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
             await db.Notifications.ExecuteDeleteAsync(ct);
             await db.TenderFeedback.ExecuteDeleteAsync(ct);
             await db.TenderApplications.ExecuteDeleteAsync(ct);
+            await db.TenderDiscoverySeen.ExecuteDeleteAsync(ct);
             await db.CustomerAccounts.ExecuteDeleteAsync(ct);
             await db.CustomerPayments.ExecuteDeleteAsync(ct);
             await db.CustomerRiskFeatures.ExecuteDeleteAsync(ct);
@@ -182,7 +190,29 @@ namespace TenderAI.Api.Controllers
         }
 
         [HttpGet("{customerId}/matches")]
-        public async Task<ActionResult<IEnumerable<NotificationDto>>> GetMatches(string customerId, CancellationToken ct)
+        public Task<ActionResult<IEnumerable<NotificationDto>>> GetMatches(string customerId, CancellationToken ct) =>
+            GetMatchesCore(customerId, includeExpired: false, ct);
+
+        [HttpGet("{customerId}/discoveries")]
+        public async Task<ActionResult<IEnumerable<SavedTenderDiscovery>>> GetDiscoveries(string customerId, CancellationToken ct)
+        {
+            customerId = NormalizeId(customerId);
+            var matches = await GetMatchesCore(customerId, includeExpired: true, ct);
+            if (matches.Result is not null) return matches.Result;
+            var saved = matches.Value!.ToList();
+            var ids = saved.Select(match => long.Parse(match.LotId, CultureInfo.InvariantCulture)).ToList();
+            var tenders = await db.Tenders.AsNoTracking().Where(t => ids.Contains(t.Id) && !t.IsDeleted)
+                .ToDictionaryAsync(t => t.Id, ct);
+            var now = DateTime.UtcNow.AddHours(5);
+            return saved.Where(match => tenders.ContainsKey(long.Parse(match.LotId, CultureInfo.InvariantCulture)))
+                .Select(match =>
+                {
+                    var tender = tenders[long.Parse(match.LotId, CultureInfo.InvariantCulture)];
+                    return new SavedTenderDiscovery(tender.ToDto(), match, tender.EndDate >= now);
+                }).ToList();
+        }
+
+        private async Task<ActionResult<IEnumerable<NotificationDto>>> GetMatchesCore(string customerId, bool includeExpired, CancellationToken ct)
         {
             customerId = NormalizeId(customerId);
             if (!await db.Customers.AnyAsync(c => c.CustomerId == customerId, ct)) return NotFound();
@@ -190,7 +220,7 @@ namespace TenderAI.Api.Controllers
             var notifications = await db.Notifications
                 .AsNoTracking()
                 .Where(n => n.CustomerId == customerId)
-                .OrderByDescending(n => n.CreatedAt)
+                .OrderByDescending(n => n.CreatedAt).ThenByDescending(n => n.Id)
                 .ToListAsync(ct);
             var feedback = (await db.TenderFeedback.AsNoTracking()
                 .Where(f => f.CustomerId == customerId).ToListAsync(ct))
@@ -210,7 +240,7 @@ namespace TenderAI.Api.Controllers
                 .ToList();
             var tenderSummaries = (await db.Tenders
                 .AsNoTracking()
-                .Where(tender => tenderIds.Contains(tender.Id) && !tender.IsDeleted && tender.EndDate >= DateTime.UtcNow.AddHours(5))
+                .Where(tender => tenderIds.Contains(tender.Id) && !tender.IsDeleted && (includeExpired || tender.EndDate >= DateTime.UtcNow.AddHours(5)))
                 .Select(tender => new { tender.Id, Title = tender.EnglishTitle ?? tender.Summary })
                 .ToListAsync(ct))
                 .ToDictionary(
@@ -289,4 +319,5 @@ namespace TenderAI.Api.Controllers
 
     public record TenderFeedbackRequest(string Value);
     public record TenderApplicationDto(string Status, DateTime AppliedAt);
+    public record SavedTenderDiscovery(TenderDto Tender, NotificationDto Match, bool IsOpen);
 }

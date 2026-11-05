@@ -111,12 +111,14 @@ namespace TenderAI.Api.Controllers
         [HttpDelete("{id:long}")]
         public async Task<IActionResult> Delete(long id, CancellationToken ct)
         {
+            using var discoveryLock = await MatchingService.LockDiscoveryAsync(ct);
             var tender = await db.Tenders.FirstOrDefaultAsync(t => t.Id == id && !t.IsDeleted, ct);
             if (tender is null) return NotFound();
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
             await db.Notifications.Where(n => n.LotId == id.ToString()).ExecuteDeleteAsync(ct);
             await db.TenderFeedback.Where(f => f.TenderId == id).ExecuteDeleteAsync(ct);
             await db.TenderApplications.Where(a => a.TenderId == id).ExecuteDeleteAsync(ct);
+            await db.TenderDiscoverySeen.Where(s => s.TenderId == id).ExecuteDeleteAsync(ct);
             tender.IsDeleted = true;
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
@@ -128,10 +130,12 @@ namespace TenderAI.Api.Controllers
         [HttpDelete]
         public async Task<IActionResult> Clear(CancellationToken ct)
         {
+            using var discoveryLock = await MatchingService.LockDiscoveryAsync(ct);
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
             await db.Notifications.ExecuteDeleteAsync(ct);
             await db.TenderFeedback.ExecuteDeleteAsync(ct);
             await db.TenderApplications.ExecuteDeleteAsync(ct);
+            await db.TenderDiscoverySeen.ExecuteDeleteAsync(ct);
             await db.TenderProducts.ExecuteDeleteAsync(ct);
             await db.Tenders.ExecuteDeleteAsync(ct);
             await transaction.CommitAsync(ct);

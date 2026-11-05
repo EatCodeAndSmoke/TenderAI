@@ -30,12 +30,15 @@ namespace TenderAI.Api.Controllers
             if (request.Revision < 0)
                 return BadRequest(new ProblemDetails { Title = "Revision must not be negative." });
 
+            using var discoveryLock = key == PromptDefinitions.Matching ? await MatchingService.LockDiscoveryAsync(ct) : null;
             var setting = await db.PromptSettings.SingleOrDefaultAsync(p => p.Key == key, ct);
             if ((setting?.Revision ?? 0) != request.Revision)
                 return Conflict(new ProblemDetails { Title = "This prompt was changed elsewhere. Reload the page before saving." });
 
             var instructions = request.Instructions.Trim();
             var savedInstructions = instructions == defaultInstructions ? null : instructions;
+            var matchingChanged = key == PromptDefinitions.Matching
+                && (setting?.Instructions ?? defaultInstructions) != instructions;
             if (setting is null)
             {
                 setting = new PromptSettingEntity { Key = key, Instructions = savedInstructions, Revision = 1 };
@@ -49,7 +52,10 @@ namespace TenderAI.Api.Controllers
 
             try
             {
+                await using var transaction = await db.Database.BeginTransactionAsync(ct);
                 await db.SaveChangesAsync(ct);
+                if (matchingChanged) await db.TenderDiscoverySeen.ExecuteDeleteAsync(ct);
+                await transaction.CommitAsync(ct);
             }
             catch (DbUpdateConcurrencyException)
             {
