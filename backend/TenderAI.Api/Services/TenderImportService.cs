@@ -57,7 +57,7 @@ namespace TenderAI.Api.Services
                         summarizedExisting);
                 }
 
-                var known = (await db.Tenders.Select(t => t.Id).ToListAsync(ct)).ToHashSet();
+                var known = (await db.Tenders.Where(t => !t.IsDeleted).Select(t => t.Id).ToListAsync(ct)).ToHashSet();
                 var loaded = 0;
                 var loadedAt = DateTime.UtcNow;
 
@@ -74,8 +74,19 @@ namespace TenderAI.Api.Services
                         var tender = await ReadDetailsAsync(candidates.Dequeue(), loadedAt, ct);
                         if (tender is null) continue;
                         await summarizer.SummarizeTendersAsync([tender], ct);
-                        db.Tenders.Add(tender);
-                        await db.SaveChangesAsync(ct);
+                        await using (var transaction = await db.Database.BeginTransactionAsync(ct))
+                        {
+                            var previouslyDeleted = await db.Tenders.SingleOrDefaultAsync(t => t.Id == tender.Id && t.IsDeleted, ct);
+                            if (previouslyDeleted is not null)
+                            {
+                                await db.Notifications.Where(n => n.LotId == tender.Id.ToString()).ExecuteDeleteAsync(ct);
+                                db.Tenders.Remove(previouslyDeleted);
+                                await db.SaveChangesAsync(ct);
+                            }
+                            db.Tenders.Add(tender);
+                            await db.SaveChangesAsync(ct);
+                            await transaction.CommitAsync(ct);
+                        }
                         loaded++;
                         yield return tender;
                     }

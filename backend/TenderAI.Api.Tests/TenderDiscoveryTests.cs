@@ -271,7 +271,58 @@ public class TenderDiscoveryTests
     }
 
     [Fact]
-    public async Task DeleteHidesTenderAndPreventsReimport()
+    public async Task DeleteRemovesCustomerMatchesAndAllowsReimportWithoutAffectingOtherTenders()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options;
+        await using var db = new TenderAiDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.AddRange(Customer("C-1"), Customer("C-2"));
+        var first = Tender(1);
+        var other = Tender(2);
+        first.Products.Add(new TenderProductEntity { ProductName = "Bread", OrderNum = 1 });
+        other.Products.Add(new TenderProductEntity { ProductName = "Bread", OrderNum = 1 });
+        db.Tenders.AddRange(first, other);
+        await db.SaveChangesAsync();
+        foreach (var customerId in new[] { "C-1", "C-2" })
+        {
+            await foreach (var _ in Matcher(db).RunStreamingAsync(CancellationToken.None, customerId)) { }
+            foreach (var tenderId in new long[] { 1, 2 })
+            {
+                db.TenderFeedback.Add(new TenderFeedbackEntity { CustomerId = customerId, TenderId = tenderId, Value = "like" });
+                db.TenderApplications.Add(new TenderApplicationEntity { CustomerId = customerId, TenderId = tenderId, AppliedAt = DateTime.UtcNow });
+                db.TenderDiscoverySeen.Add(new TenderDiscoverySeenEntity { CustomerId = customerId, TenderId = tenderId });
+            }
+        }
+        await db.SaveChangesAsync();
+        Assert.Equal(4, await db.Notifications.CountAsync());
+        var controller = new TendersController(db);
+        Assert.IsType<NoContentResult>(await controller.Delete(1, CancellationToken.None));
+        db.ChangeTracker.Clear();
+        Assert.Equal(2, Assert.Single((await controller.GetAll(CancellationToken.None, true)).Value!).Id);
+        Assert.Equal(2, Assert.Single(await db.Tenders.ToListAsync()).Id);
+        Assert.Equal(2, Assert.Single(await db.TenderProducts.ToListAsync()).TenderId);
+        Assert.All(await db.TenderFeedback.ToListAsync(), feedback => Assert.Equal(2, feedback.TenderId));
+        Assert.Equal(2, await db.TenderFeedback.CountAsync());
+        Assert.All(await db.TenderApplications.ToListAsync(), application => Assert.Equal(2, application.TenderId));
+        Assert.Equal(2, await db.TenderApplications.CountAsync());
+        Assert.All(await db.Notifications.ToListAsync(), notification => Assert.Equal("2", notification.LotId));
+        Assert.Equal(2, await db.Notifications.CountAsync());
+        Assert.All(await db.TenderDiscoverySeen.ToListAsync(), seen => Assert.Equal(2, seen.TenderId));
+        Assert.Equal(2, await db.TenderDiscoverySeen.CountAsync());
+        Assert.Equal(2, await db.Customers.CountAsync());
+        var handler = new UzexHandler(2);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://uzex.test/") };
+        var imported = await Importer(db, http).LoadNewAsync(1, CancellationToken.None);
+        Assert.Equal(1, Assert.Single(imported).Id);
+        var events = new List<TenderDiscoveryEvent>();
+        await foreach (var item in Matcher(db).DiscoverAsync("C-1", 1, Importer(db, http), CancellationToken.None)) events.Add(item);
+        Assert.Equal(1, Assert.Single(events, item => item.Type == "match").Tender!.Id);
+    }
+
+    [Fact]
+    public async Task PreviouslySoftDeletedTenderCanBeReimportedAndItsOldCustomerStateIsRemoved()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
@@ -279,24 +330,49 @@ public class TenderDiscoveryTests
         await using var db = new TenderAiDbContext(options);
         await db.Database.EnsureCreatedAsync();
         db.Customers.Add(Customer("C-1"));
-        db.Tenders.Add(Tender(1));
+        var deleted = Tender(1);
+        deleted.Products.Add(new TenderProductEntity { ProductName = "Old product", OrderNum = 1 });
+        db.Tenders.Add(deleted);
+        await db.SaveChangesAsync();
+        using var emptyHttp = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
+        await foreach (var _ in Matcher(db).DiscoverAsync("C-1", 1, Importer(db, emptyHttp), CancellationToken.None)) { }
         db.TenderFeedback.Add(new TenderFeedbackEntity { CustomerId = "C-1", TenderId = 1, Value = "like" });
         db.TenderApplications.Add(new TenderApplicationEntity { CustomerId = "C-1", TenderId = 1, AppliedAt = DateTime.UtcNow });
+        deleted.IsDeleted = true;
         await db.SaveChangesAsync();
-        var controller = new TendersController(db);
-        using var initialHttp = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
-        await foreach (var _ in Matcher(db).DiscoverAsync("C-1", 1, Importer(db, initialHttp), CancellationToken.None)) { }
-        Assert.Single(await db.Notifications.ToListAsync());
-        Assert.IsType<NoContentResult>(await controller.Delete(1, CancellationToken.None));
-        Assert.Empty((await controller.GetAll(CancellationToken.None, true)).Value!);
+        db.ChangeTracker.Clear();
+
+        using var http = new HttpClient(new UzexHandler(1)) { BaseAddress = new Uri("https://uzex.test/") };
+        var reimported = Assert.Single(await Importer(db, http).LoadNewAsync(1, CancellationToken.None));
+        Assert.Equal(1, reimported.Id);
+        db.ChangeTracker.Clear();
+        Assert.False((await db.Tenders.SingleAsync()).IsDeleted);
+        Assert.Empty(await db.TenderProducts.ToListAsync());
+        Assert.Empty(await db.Notifications.ToListAsync());
         Assert.Empty(await db.TenderFeedback.ToListAsync());
         Assert.Empty(await db.TenderApplications.ToListAsync());
-        Assert.Empty(await db.Notifications.ToListAsync());
-        Assert.Empty(await db.TenderDiscoverySeen.AsNoTracking().ToListAsync());
-        var handler = new UzexHandler(2);
-        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://uzex.test/") };
-        var imported = await Importer(db, http).LoadNewAsync(1, CancellationToken.None);
-        Assert.Equal(2, Assert.Single(imported).Id);
+        Assert.Empty(await db.TenderDiscoverySeen.ToListAsync());
+    }
+
+    [Fact]
+    public async Task FailedReimportKeepsPreviouslySoftDeletedTenderAndItsData()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options;
+        await using var db = new TenderAiDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        var deleted = Tender(1);
+        deleted.IsDeleted = true;
+        deleted.Products.Add(new TenderProductEntity { ProductName = "Old product", OrderNum = 1 });
+        db.Tenders.Add(deleted);
+        await db.SaveChangesAsync();
+        using var http = new HttpClient(new UzexHandler(1, failDetails: true)) { BaseAddress = new Uri("https://uzex.test/") };
+        Assert.Empty(await Importer(db, http).LoadNewAsync(1, CancellationToken.None));
+        db.ChangeTracker.Clear();
+        Assert.True((await db.Tenders.SingleAsync()).IsDeleted);
+        Assert.Equal("Old product", (await db.TenderProducts.SingleAsync()).ProductName);
     }
 
     [Fact]
@@ -731,7 +807,7 @@ public class TenderDiscoveryTests
         }
     }
 
-    private sealed class UzexHandler(int count) : HttpMessageHandler
+    private sealed class UzexHandler(int count, bool failDetails = false) : HttpMessageHandler
     {
         public int ListCalls { get; private set; }
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -746,6 +822,8 @@ public class TenderDiscoveryTests
                 });
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(rows) });
             }
+            if (failDetails)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadGateway));
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = JsonContent.Create(new { name = "Bread supply", customer_name = "Buyer" })
