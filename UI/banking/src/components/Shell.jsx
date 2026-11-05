@@ -5,7 +5,8 @@ import { BellIcon, LogoIcon } from './icons.jsx';
 
 // Signed-in layout: header with the bell and "Log out", then the current page
 export default function Shell() {
-  const { logout } = useSession();
+  const { logout, updates, updatesError, updatesLoading } = useSession();
+  const unreadCount = updates.filter(update => !update.isRead).length;
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const onNotifications = pathname === '/notifications';
@@ -33,11 +34,13 @@ export default function Shell() {
           <div className="flex items-center gap-1">
             <Link
               to="/notifications"
-              aria-label="Notifications, 0 new"
+              aria-label={updatesError ? 'Notifications unavailable' : updatesLoading ? 'Loading notifications' : `Notifications, ${unreadCount} unread`}
               className={`relative grid size-10 place-items-center rounded-full transition-colors hover:bg-white/10 ${onNotifications ? 'bg-white/15' : ''}`}
             >
               <BellIcon className="size-6" />
+              {(unreadCount > 0 || updatesError) && <span aria-hidden="true" className="notification-badge absolute right-0 top-0 grid min-h-4 min-w-4 place-items-center rounded-full bg-brand-300 px-1 text-[10px] font-bold text-cobalt">{updatesError ? '!' : unreadCount}</span>}
             </Link>
+            <span className="sr-only" aria-live="polite">{!updatesError && unreadCount > 0 ? `${unreadCount} unread demo notification${unreadCount === 1 ? '' : 's'}` : ''}</span>
             <button
               type="button"
               onClick={handleLogout}

@@ -14,15 +14,16 @@ test('application confirmation only offers financing when a current offer exists
   });
   try {
     const { default: Dialog } = await server.ssrLoadModule('/src/components/TenderApplicationDialog.jsx');
-    const render = offer => renderToStaticMarkup(React.createElement(MemoryRouter, null,
+    const render = (offer, simulationScheduled = true) => renderToStaticMarkup(React.createElement(MemoryRouter, null,
       React.createElement(Dialog, {
         tender: { englishTitle: 'Weather stations' },
-        match: { lotId: '42', offer },
+        match: { lotId: '42', offer, simulationScheduled },
         onClose: () => {}
       })));
 
     const eligible = render({ financing: 2_500_000_000 });
     assert.match(eligible, /Your request is saved/);
+    assert.match(eligible, /share the simulated result in your in-app notifications/);
     assert.doesNotMatch(eligible, /Demo only|sent to UZEX|notifications are not sent/);
     assert.match(eligible, /2 500 000 000 UZS/);
     assert.match(eligible, /href="\/loan\/42"/);
@@ -30,6 +31,7 @@ test('application confirmation only offers financing when a current offer exists
     const ineligible = render(null);
     assert.doesNotMatch(ineligible, /Explore financing|Need a little support|\/loan\/42/);
     assert.doesNotMatch(render({ financing: 0 }), /Explore financing/);
+    assert.doesNotMatch(render(null, false), /simulated result in your in-app notifications/);
   } finally {
     await server.close();
   }

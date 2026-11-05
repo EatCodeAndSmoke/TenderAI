@@ -126,6 +126,81 @@ public class TenderDiscoveryTests
     }
 
     [Fact]
+    public async Task DislikeCommentIsOptionalValidatedAndPersisted()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        db.Tenders.Add(Tender(1));
+        await db.SaveChangesAsync();
+        var controller = new CustomersController(db);
+        Assert.IsType<NoContentResult>(await controller.SetFeedback("C-1", 1, new("dislike", "  Too far away  "), CancellationToken.None));
+        db.ChangeTracker.Clear();
+        Assert.Equal("Too far away", (await db.TenderFeedback.SingleAsync()).Comment);
+        Assert.IsType<BadRequestObjectResult>(await controller.SetFeedback("C-1", 1, new("dislike", new string('x', 501)), CancellationToken.None));
+        Assert.Equal("Too far away", (await db.TenderFeedback.SingleAsync()).Comment);
+        Assert.IsType<NoContentResult>(await controller.SetFeedback("C-1", 1, new("dislike", new string('x', 500)), CancellationToken.None));
+        Assert.Equal(500, (await db.TenderFeedback.SingleAsync()).Comment!.Length);
+        Assert.IsType<NoContentResult>(await controller.SetFeedback("C-1", 1, new("dislike"), CancellationToken.None));
+        Assert.Null((await db.TenderFeedback.SingleAsync()).Comment);
+        await controller.SetFeedback("C-1", 1, new("dislike", "Not relevant"), CancellationToken.None);
+        await controller.SetFeedback("C-1", 1, new("like"), CancellationToken.None);
+        Assert.Null((await db.TenderFeedback.SingleAsync()).Comment);
+    }
+
+    [Fact]
+    public async Task SimulatedUpdatesAreDelayedReadPerCustomerAndSurviveSchemaUpgrade()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.AddRange(Customer("C-1"), Customer("C-2"));
+        db.Tenders.AddRange(Enumerable.Range(1, 4).Select(Tender));
+        db.TenderApplications.Add(new() { CustomerId = "C-1", TenderId = 1, AppliedAt = DateTime.UtcNow.AddMinutes(-1) });
+        db.TenderFeedback.Add(new() { CustomerId = "C-1", TenderId = 1, Value = "like" });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"TenderFeedback\" DROP COLUMN \"Comment\"");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"TenderApplications\" DROP COLUMN \"SimulatedOutcome\"");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"TenderApplications\" DROP COLUMN \"NotificationReadAt\"");
+        DatabaseSchema.AddMissingColumns(db);
+        DatabaseSchema.AddMissingColumns(db);
+        Assert.Null((await db.TenderApplications.SingleAsync()).SimulatedOutcome);
+        Assert.Null((await db.TenderFeedback.SingleAsync()).Comment);
+        db.TenderApplications.AddRange(
+            new() { CustomerId = "C-1", TenderId = 2, AppliedAt = DateTime.UtcNow.AddMinutes(-1), SimulatedOutcome = "sent" },
+            new() { CustomerId = "C-1", TenderId = 3, AppliedAt = DateTime.UtcNow.AddMinutes(-1), SimulatedOutcome = "needs_details" },
+            new() { CustomerId = "C-1", TenderId = 4, AppliedAt = DateTime.UtcNow, SimulatedOutcome = "sent" },
+            new() { CustomerId = "C-2", TenderId = 2, AppliedAt = DateTime.UtcNow.AddMinutes(-1), SimulatedOutcome = "sent" });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var controller = new CustomersController(db);
+        Assert.False((await controller.Apply("C-1", 1, CancellationToken.None)).Value!.SimulationScheduled);
+        var updates = (await controller.GetNotifications("C-1", CancellationToken.None)).Value!.ToList();
+        Assert.Equal(2, updates.Count);
+        Assert.Contains(updates, u => u.TenderId == 2 && u.Outcome == "sent" && !u.IsRead);
+        Assert.Contains(updates, u => u.TenderId == 3 && u.Outcome == "needs_details" && !u.IsRead);
+        Assert.IsType<NoContentResult>(await controller.MarkNotificationsRead("C-1", new([2, 4]), CancellationToken.None));
+        var afterRead = (await controller.GetNotifications("C-1", CancellationToken.None)).Value!.ToList();
+        Assert.True(afterRead.Single(u => u.TenderId == 2).IsRead);
+        Assert.False(afterRead.Single(u => u.TenderId == 3).IsRead);
+        Assert.IsType<NoContentResult>(await controller.MarkNotificationsRead("C-1", new([3]), CancellationToken.None));
+        Assert.All((await controller.GetNotifications("C-1", CancellationToken.None)).Value!, update => Assert.True(update.IsRead));
+        Assert.False(Assert.Single((await controller.GetNotifications("C-2", CancellationToken.None)).Value!).IsRead);
+        Assert.Null((await db.TenderApplications.AsNoTracking().SingleAsync(a => a.CustomerId == "C-1" && a.TenderId == 4)).NotificationReadAt);
+        var pending = await db.TenderApplications.SingleAsync(a => a.CustomerId == "C-1" && a.TenderId == 4);
+        pending.AppliedAt = DateTime.UtcNow.AddMinutes(-1);
+        await db.SaveChangesAsync();
+        Assert.False((await controller.GetNotifications("C-1", CancellationToken.None)).Value!.Single(u => u.TenderId == 4).IsRead);
+        Assert.IsType<NotFoundResult>((await controller.GetNotifications("missing", CancellationToken.None)).Result);
+        Assert.IsType<NotFoundResult>(await controller.MarkNotificationsRead("missing", new([2]), CancellationToken.None));
+        Assert.IsType<BadRequestObjectResult>(await controller.MarkNotificationsRead("C-1", new([]), CancellationToken.None));
+    }
+
+    [Fact]
     public async Task DefaultDiscoveryImportsUntilThreeMatchesAreFound()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
@@ -174,9 +249,13 @@ public class TenderDiscoveryTests
         await foreach (var _ in Matcher(db).DiscoverAsync("C-1", 1, Importer(db, http), CancellationToken.None)) { }
         Assert.IsType<NoContentResult>(await controller.SetFeedback("C-1", 1, new TenderFeedbackRequest("like"), CancellationToken.None));
         var application = (await controller.Apply("c-1", 1, CancellationToken.None)).Value!;
+        Assert.True(application.SimulationScheduled);
+        var outcome = (await db.TenderApplications.AsNoTracking().SingleAsync()).SimulatedOutcome;
+        Assert.Contains(outcome, new[] { "sent", "needs_details" });
         Assert.Equal("applied", application.Status);
         Assert.Equal(DateTimeKind.Utc, application.AppliedAt.Kind);
         Assert.Equal(application, (await controller.Apply("C-1", 1, CancellationToken.None)).Value);
+        Assert.Equal(outcome, (await db.TenderApplications.AsNoTracking().SingleAsync()).SimulatedOutcome);
         Assert.IsType<ConflictObjectResult>((await controller.Apply("C-2", 1, CancellationToken.None)).Result);
 
         db.ChangeTracker.Clear();

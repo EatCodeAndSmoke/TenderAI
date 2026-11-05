@@ -14,6 +14,7 @@ namespace TenderAI.Api.Controllers
     {
         // Demo authentication for the local prototype.
         private const string DemoPassword = "123";
+        private static readonly TimeSpan SimulationDelay = TimeSpan.FromSeconds(12);
         private static readonly SemaphoreSlim AccountBackfillLock = new(1, 1);
 
         private static DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
@@ -182,11 +183,38 @@ namespace TenderAI.Api.Controllers
         }
 
         [HttpGet("{customerId}/notifications")]
-        public async Task<ActionResult<IEnumerable<NotificationDto>>> GetNotifications(string customerId, CancellationToken ct)
+        public async Task<ActionResult<IEnumerable<ApplicationUpdateDto>>> GetNotifications(string customerId, CancellationToken ct)
         {
             customerId = NormalizeId(customerId);
             if (!await db.Customers.AnyAsync(c => c.CustomerId == customerId, ct)) return NotFound();
-            return Array.Empty<NotificationDto>();
+            var cutoff = DateTime.UtcNow - SimulationDelay;
+            var updates = await (from application in db.TenderApplications.AsNoTracking()
+                                 join tender in db.Tenders.AsNoTracking() on application.TenderId equals tender.Id
+                                 where application.CustomerId == customerId && application.SimulatedOutcome != null
+                                     && application.AppliedAt <= cutoff && !tender.IsDeleted
+                                 orderby application.AppliedAt descending, application.TenderId descending
+                                 select new { application, tender.EnglishTitle, tender.Summary, tender.Name }).ToListAsync(ct);
+            return updates.Select(update => new ApplicationUpdateDto(
+                update.application.TenderId,
+                update.EnglishTitle ?? update.Summary ?? update.Name,
+                update.application.SimulatedOutcome!,
+                DateTime.SpecifyKind(update.application.AppliedAt + SimulationDelay, DateTimeKind.Utc),
+                update.application.NotificationReadAt.HasValue)).ToList();
+        }
+
+        [HttpPut("{customerId}/notifications/read")]
+        public async Task<IActionResult> MarkNotificationsRead(string customerId, [FromBody] MarkApplicationUpdatesReadRequest request, CancellationToken ct)
+        {
+            customerId = NormalizeId(customerId);
+            if (request.TenderIds is null || request.TenderIds.Count == 0 || request.TenderIds.Count > 500)
+                return BadRequest("Provide between 1 and 500 tender IDs.");
+            if (!await db.Customers.AnyAsync(c => c.CustomerId == customerId, ct)) return NotFound();
+            var now = DateTime.UtcNow;
+            var cutoff = now - SimulationDelay;
+            await db.TenderApplications.Where(a => a.CustomerId == customerId && a.SimulatedOutcome != null
+                    && request.TenderIds.Contains(a.TenderId) && a.AppliedAt <= cutoff && a.NotificationReadAt == null)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(a => a.NotificationReadAt, now), ct);
+            return NoContent();
         }
 
         [HttpGet("{customerId}/matches")]
@@ -280,11 +308,18 @@ namespace TenderAI.Api.Controllers
         {
             customerId = NormalizeId(customerId);
             if (request.Value is not ("like" or "dislike")) return BadRequest("Feedback must be like or dislike.");
+            var comment = request.Comment?.Trim();
+            if (comment?.Length > 500) return BadRequest("Feedback comments must not exceed 500 characters.");
             if (!await db.Customers.AnyAsync(c => c.CustomerId == customerId, ct)
                 || !await db.Tenders.AnyAsync(t => t.Id == tenderId && !t.IsDeleted, ct)) return NotFound();
             var feedback = await db.TenderFeedback.FindAsync([customerId, tenderId], ct);
-            if (feedback is null) db.TenderFeedback.Add(new TenderFeedbackEntity { CustomerId = customerId, TenderId = tenderId, Value = request.Value });
-            else feedback.Value = request.Value;
+            if (feedback is null)
+            {
+                feedback = new TenderFeedbackEntity { CustomerId = customerId, TenderId = tenderId, Value = request.Value };
+                db.TenderFeedback.Add(feedback);
+            }
+            feedback.Value = request.Value;
+            feedback.Comment = request.Value == "dislike" && !string.IsNullOrEmpty(comment) ? comment : null;
             await db.SaveChangesAsync(ct);
             return NoContent();
         }
@@ -296,9 +331,10 @@ namespace TenderAI.Api.Controllers
             var lotId = tenderId.ToString(CultureInfo.InvariantCulture);
             var now = DateTime.UtcNow;
             var localNow = now.AddHours(5);
+            var simulatedOutcome = Random.Shared.Next(2) == 0 ? "sent" : "needs_details";
             await db.Database.ExecuteSqlInterpolatedAsync($"""
-                INSERT INTO "TenderApplications" ("CustomerId", "TenderId", "AppliedAt")
-                SELECT {customerId}, {tenderId}, {now}
+                INSERT INTO "TenderApplications" ("CustomerId", "TenderId", "AppliedAt", "SimulatedOutcome")
+                SELECT {customerId}, {tenderId}, {now}, {simulatedOutcome}
                 WHERE EXISTS (SELECT 1 FROM "Customers" WHERE "CustomerId" = {customerId})
                   AND EXISTS (SELECT 1 FROM "Tenders"
                               WHERE "Id" = {tenderId} AND "IsDeleted" = 0 AND "EndDate" >= {localNow})
@@ -321,7 +357,7 @@ namespace TenderAI.Api.Controllers
                 var (offer, reason) = tender.EndDate >= DateTime.UtcNow.AddHours(5)
                     ? MatchingService.GetCurrentLoanDecision(customer, tender)
                     : (null, "This tender is closed, so a loan application is not suggested.");
-                return new TenderApplicationDto("applied", DateTime.SpecifyKind(application.AppliedAt, DateTimeKind.Utc), offer, reason);
+                return new TenderApplicationDto("applied", DateTime.SpecifyKind(application.AppliedAt, DateTimeKind.Utc), offer, reason, application.SimulatedOutcome is not null);
             }
             if (!await db.Customers.AnyAsync(c => c.CustomerId == customerId, ct)
                 || !await db.Tenders.AnyAsync(t => t.Id == tenderId && !t.IsDeleted, ct)) return NotFound();
@@ -343,7 +379,9 @@ namespace TenderAI.Api.Controllers
         private static string NormalizeId(string customerId) => customerId.Trim().ToUpperInvariant();
     }
 
-    public record TenderFeedbackRequest(string Value);
-    public record TenderApplicationDto(string Status, DateTime AppliedAt, LoanOfferDto? Offer, string LoanDecisionReason);
+    public record TenderFeedbackRequest(string Value, string? Comment = null);
+    public record MarkApplicationUpdatesReadRequest(IReadOnlyList<long>? TenderIds);
+    public record TenderApplicationDto(string Status, DateTime AppliedAt, LoanOfferDto? Offer, string LoanDecisionReason, bool SimulationScheduled);
+    public record ApplicationUpdateDto(long TenderId, string TenderTitle, string Outcome, DateTime AvailableAt, bool IsRead);
     public record SavedTenderDiscovery(TenderDto Tender, NotificationDto Match, bool IsOpen);
 }
