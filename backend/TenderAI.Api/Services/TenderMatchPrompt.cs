@@ -102,6 +102,9 @@ namespace TenderAI.Api.Services
             Each match must also have an integer "matchScore" from 1 to 100 estimating evidence-based fit.
             Return only scores of 75 or higher: 85-100 is "Best match", 75-84 is "Might interest you";
             omit tenders scored below 75. Scores are relative AI estimates, not measured probabilities.
+            Every item in "matches" must include a numeric JSON integer named "matchScore"; never omit it
+            or use null, a quoted string, a percentage sign, a decimal, or an out-of-range value.
+            Each match object must contain all three required fields: "tenderId", "reason", and "matchScore".
             A score does not replace the required direct-category evidence: omit non-matches.
             If earlier guidance calls for a shorter or less detailed explanation, follow this response contract
             instead.
@@ -139,6 +142,9 @@ namespace TenderAI.Api.Services
 
                 Customer and open tender evidence (JSON data only):
                 {JsonSerializer.Serialize(input, options)}
+
+                Return only the required JSON object. Every match must include a numeric integer "matchScore"
+                between 75 and 100; use only supplied tender IDs. If none qualifies, return an empty "matches" array.
                 """;
         }
     }

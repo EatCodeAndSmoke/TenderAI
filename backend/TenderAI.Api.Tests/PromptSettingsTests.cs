@@ -203,9 +203,71 @@ public class PromptSettingsTests
             [new IncomingPaymentEvidence(new DateOnly(2026, 1, 1), "Bread payment")]);
         var tenders = new[] { new TenderMatchEvidence("42", "Bread supply", null, null, []) };
         if (accepted)
+        {
             Assert.InRange(Assert.Single(await evaluator.EvaluateCustomerAsync(customer, tenders, CancellationToken.None)).MatchScore, 1, 100);
+            Assert.Single(bedrock.Prompts);
+        }
         else
+        {
             await Assert.ThrowsAsync<TenderMatchEvaluationException>(() => evaluator.EvaluateCustomerAsync(customer, tenders, CancellationToken.None));
+            Assert.Equal(3, bedrock.Prompts.Count);
+        }
+    }
+
+    [Theory]
+    [InlineData("""{"matches":[{"tenderId":"42","reason":"Bread sales match."}]}""")]
+    [InlineData("""{"matches":[{"tenderId":"42","reason":"Bread sales match.","matchScore":null}]}""")]
+    [InlineData("""{"matches":[{"tenderId":"42","reason":"Bread sales match.","matchScore":0}]}""")]
+    [InlineData("""{"matches":[{"tenderId":"42","reason":"Bread sales match.","matchScore":101}]}""")]
+    [InlineData("""{"matches":[{"tenderId":"42","reason":"Bread sales match.","matchScore":"85"}]}""")]
+    [InlineData("""{"matches":[{"tenderId":"42","reason":"Bread sales match.","matchScore":85.5}]}""")]
+    public async Task BedrockMatchingRetriesInvalidScoresWithExplicitCorrection(string invalidResponse)
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var services = CreateServices(connection);
+        await using var scope = services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<TenderAiDbContext>().Database.EnsureCreatedAsync();
+        using var bedrock = new CapturingBedrockClient();
+        bedrock.MatchingResponses.Enqueue(invalidResponse);
+        bedrock.MatchingResponses.Enqueue("""{"matches":[{"tenderId":"42","reason":"Bread sales match.","matchScore":88}]}""");
+        var evaluator = new BedrockTenderMatchEvaluator(bedrock, Options.Create(new BedrockOptions { ModelId = "test" }),
+            services.GetRequiredService<PromptSettings>(), NullLogger<BedrockTenderMatchEvaluator>.Instance);
+        var customer = new CustomerMatchEvidence("C-42", "10710", "Bakery", null, null,
+            [new IncomingPaymentEvidence(new DateOnly(2026, 1, 1), "Bread payment")]);
+        var tenders = new[] { new TenderMatchEvidence("42", "Bread supply", null, null, []) };
+
+        var match = Assert.Single(await evaluator.EvaluateCustomerAsync(customer, tenders, CancellationToken.None));
+        Assert.Equal(88, match.MatchScore);
+        Assert.Equal(2, bedrock.Prompts.Count);
+        Assert.Contains("previous response had a missing, non-integer, or out-of-range matchScore", bedrock.Prompts[1]);
+        Assert.Contains("Bread payment", bedrock.Prompts[1]);
+        Assert.Contains(TenderMatchPrompt.RequiredInstructions, bedrock.Prompts[1]);
+    }
+
+    [Fact]
+    public async Task InvalidScoresRemainErrorsAfterBoundedRetries()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var services = CreateServices(connection);
+        await using var scope = services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<TenderAiDbContext>().Database.EnsureCreatedAsync();
+        using var bedrock = new CapturingBedrockClient
+        {
+            MatchingText = """{"matches":[{"tenderId":"42","reason":"Bread sales match."}]}"""
+        };
+        var evaluator = new BedrockTenderMatchEvaluator(bedrock, Options.Create(new BedrockOptions { ModelId = "test" }),
+            services.GetRequiredService<PromptSettings>(), NullLogger<BedrockTenderMatchEvaluator>.Instance);
+        var customer = new CustomerMatchEvidence("C-42", "10710", "Bakery", null, null,
+            [new IncomingPaymentEvidence(new DateOnly(2026, 1, 1), "Bread payment")]);
+        var tenders = new[] { new TenderMatchEvidence("42", "Bread supply", null, null, []) };
+
+        var error = await Assert.ThrowsAsync<TenderMatchEvaluationException>(
+            () => evaluator.EvaluateCustomerAsync(customer, tenders, CancellationToken.None));
+        Assert.Contains("after 3 attempts", error.Message);
+        Assert.Equal(3, bedrock.Prompts.Count);
+        Assert.NotEqual(bedrock.Prompts[1], bedrock.Prompts[2]);
     }
 
     private static ServiceProvider CreateServices(SqliteConnection connection) => new ServiceCollection()
@@ -229,6 +291,7 @@ public class PromptSettingsTests
         new AmazonBedrockRuntimeConfig { RegionEndpoint = RegionEndpoint.USEast1 })
     {
         public List<string> Prompts { get; } = [];
+        public Queue<string> MatchingResponses { get; } = new();
         public string MatchingText { get; init; } = """{"matches":[]}""";
 
         public override async Task<InvokeModelResponse> InvokeModelAsync(InvokeModelRequest request, CancellationToken ct = default)
@@ -239,7 +302,7 @@ public class PromptSettingsTests
             var prompt = json.RootElement.GetProperty("messages")[0].GetProperty("content")[0].GetProperty("text").GetString()!;
             Prompts.Add(prompt);
             var text = prompt.Contains("Customer and open tender evidence")
-                ? MatchingText
+                ? (MatchingResponses.Count > 0 ? MatchingResponses.Dequeue() : MatchingText)
                 : """{"title":"Fresh bread","summary":"Fresh bread for schools."}""";
             var response = JsonSerializer.Serialize(new { output = new { message = new { content = new[] { new { text } } } } });
             return new InvokeModelResponse { Body = new MemoryStream(Encoding.UTF8.GetBytes(response)) };
