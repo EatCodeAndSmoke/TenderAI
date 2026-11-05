@@ -15,6 +15,14 @@ namespace TenderAI.Api.Services
         ILogger<BedrockTenderMatchEvaluator> logger) : ITenderMatchEvaluator
     {
         private const int MaxInvocationAttempts = 4;
+        private const int MaxScoreAttempts = 3;
+        private const string ScoreRetryInstructions = """
+
+            The previous response had a missing, non-integer, or out-of-range matchScore. Reassess the supplied evidence
+            and return the complete JSON object again. Every item in "matches" must contain "tenderId",
+            "reason", and "matchScore". The matchScore must be a JSON integer between 75 and 100, not a
+            string or percentage. Use only supplied tender IDs. If no tender qualifies, return {"matches":[]}.
+            """;
         private static readonly HashSet<string> ThrottleErrorCodes = new(StringComparer.OrdinalIgnoreCase)
         {
             "ThrottlingException",
@@ -33,7 +41,34 @@ namespace TenderAI.Api.Services
             CancellationToken ct)
         {
             var instructions = await prompts.GetInstructionsAsync(PromptDefinitions.Matching, ct);
-            var requestBody = JsonSerializer.Serialize(new
+            var prompt = TenderMatchPrompt.Build(customer, tenders, instructions);
+            for (var attempt = 1; ; attempt++)
+            {
+                var retryPrompt = prompt + ScoreRetryInstructions;
+                if (attempt > 2)
+                    retryPrompt += "\nBefore responding, verify that every returned match has its own numeric integer matchScore.";
+                var requestBody = CreateRequestBody(attempt == 1 ? prompt : retryPrompt);
+                var response = await InvokeWithThrottleRetryAsync(requestBody, ct);
+                try
+                {
+                    return await ReadMatchesAsync(response, tenders, ct);
+                }
+                catch (InvalidMatchScoreException ex) when (attempt < MaxScoreAttempts)
+                {
+                    logger.LogWarning(
+                        "Bedrock returned {ScoreProblem}; retrying customer matching attempt {Attempt} of {MaxAttempts}.",
+                        ex.Message, attempt + 1, MaxScoreAttempts);
+                }
+                catch (InvalidMatchScoreException ex)
+                {
+                    throw new TenderMatchEvaluationException(
+                        $"Amazon Bedrock returned an invalid matching score after {MaxScoreAttempts} attempts.", ex);
+                }
+            }
+        }
+
+        private static string CreateRequestBody(string prompt) =>
+            JsonSerializer.Serialize(new
             {
                 schemaVersion = "messages-v1",
                 messages = new[]
@@ -43,7 +78,7 @@ namespace TenderAI.Api.Services
                         role = "user",
                         content = new[]
                         {
-                            new { text = TenderMatchPrompt.Build(customer, tenders, instructions) }
+                            new { text = prompt }
                         }
                     }
                 },
@@ -54,7 +89,9 @@ namespace TenderAI.Api.Services
                 }
             });
 
-            var response = await InvokeWithThrottleRetryAsync(requestBody, ct);
+        private static async Task<IReadOnlyList<TenderCandidateMatch>> ReadMatchesAsync(
+            InvokeModelResponse response, IReadOnlyCollection<TenderMatchEvidence> tenders, CancellationToken ct)
+        {
             JsonDocument responseJson;
             using (var responseBody = response.Body)
             {
@@ -132,12 +169,15 @@ namespace TenderAI.Api.Services
                     throw new TenderMatchEvaluationException("Amazon Bedrock returned an invalid matching explanation.");
                 }
 
-                if (match.MatchScore is not (>= 1 and <= 100))
-                {
-                    throw new TenderMatchEvaluationException("Amazon Bedrock returned an invalid matching score.");
-                }
+                if (match.MatchScore is null || match.MatchScore.Value.ValueKind == JsonValueKind.Null)
+                    throw new InvalidMatchScoreException("a missing matching score");
+                var score = match.MatchScore.Value;
+                if (score.ValueKind != JsonValueKind.Number || !score.TryGetInt32(out var matchScore))
+                    throw new InvalidMatchScoreException("a non-integer matching score");
+                if (matchScore is < 1 or > 100)
+                    throw new InvalidMatchScoreException("an out-of-range matching score");
 
-                result.Add(new TenderCandidateMatch(tenderId, reason, match.MatchScore.Value));
+                result.Add(new TenderCandidateMatch(tenderId, reason, matchScore));
             }
 
             return result;
@@ -210,7 +250,9 @@ namespace TenderAI.Api.Services
         {
             public string? TenderId { get; set; }
             public string? Reason { get; set; }
-            public int? MatchScore { get; set; }
+            public JsonElement? MatchScore { get; set; }
         }
+
+        private sealed class InvalidMatchScoreException(string message) : Exception(message);
     }
 }
