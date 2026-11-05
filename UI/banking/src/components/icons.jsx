@@ -1,3 +1,5 @@
+import tbcUzLogo from '../assets/tbc-uz-logo.jpg';
+
 const stroke = {
   viewBox: '0 0 24 24',
   fill: 'none',
@@ -7,10 +9,10 @@ const stroke = {
   'aria-hidden': true
 };
 
-export const LogoIcon = ({ className = 'size-6' }) => (
-  <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
-    <path d="M6 6h12v12H6z" /><path d="M12 3.5 20.5 12 12 20.5 3.5 12z" />
-  </svg>
+export const LogoIcon = ({ className = 'size-9' }) => (
+  <span className={`relative block shrink-0 overflow-hidden rounded-xl bg-[#110c30] ${className}`} aria-hidden="true">
+    <img src={tbcUzLogo} alt="" className="absolute left-1/2 top-1/2 h-[190%] w-[190%] max-w-none -translate-x-1/2 -translate-y-1/2" />
+  </span>
 );
 
 export const BellIcon = ({ className = 'size-6' }) => (

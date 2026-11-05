@@ -24,10 +24,8 @@ export default function Shell() {
     <div>
       <header className="bg-cobalt bg-linear-to-r from-cobalt-top to-cobalt text-white">
         <div className="mx-auto flex h-16 max-w-3xl items-center justify-between px-4">
-          <Link to="/home" className="flex items-center gap-2.5" aria-label="Business Bank, home">
-            <span className="grid size-9 place-items-center rounded-xl bg-white/10 text-brand-300 ring-1 ring-white/15">
-              <LogoIcon className="size-5" />
-            </span>
+          <Link to="/home" className="flex items-center gap-2 whitespace-nowrap sm:gap-2.5" aria-label="Business Bank, home">
+            <LogoIcon className="size-9 ring-1 ring-white/15" />
             <span className="font-semibold">Business Bank</span>
           </Link>
 
@@ -44,7 +42,7 @@ export default function Shell() {
             <button
               type="button"
               onClick={handleLogout}
-              className="rounded-lg px-3 py-2 text-sm font-medium text-cobalt-soft transition-colors hover:bg-white/10 hover:text-white"
+              className="whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium text-cobalt-soft transition-colors hover:bg-white/10 hover:text-white"
             >
               Log out
             </button>
