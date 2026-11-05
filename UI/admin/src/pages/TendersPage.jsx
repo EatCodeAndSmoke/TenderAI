@@ -35,10 +35,25 @@ export default function TendersPage({ onToast }) {
     } catch (err) { setError(err.message); }
     finally { setBusy(null); }
   }
+  async function exportTenders() {
+    setBusy('export'); setError('');
+    try {
+      const currentTenders = await getTenders();
+      setTenders(currentTenders);
+      const { downloadTenderSummaries } = await import('../lib/tenderExport.js');
+      await downloadTenderSummaries(currentTenders);
+      onToast('Tender summaries exported.');
+    } catch (err) { setError(`Could not export tender summaries: ${err.message}`); }
+    finally { setBusy(null); }
+  }
   return <section>
     <PageHeader title="Tenders" summary="Manage stored UZEX tenders. Deleted tenders can be imported again."
-      actions={<button type="button" onClick={clear} disabled={loading || busy !== null}
-        className={`${BTN_SECONDARY} disabled:opacity-50`}>{busy === 'all' ? 'Clearing…' : 'Clear all tenders'}</button>} />
+      actions={<>
+        <button type="button" onClick={exportTenders} disabled={loading || busy !== null}
+          className={`${BTN_SECONDARY} disabled:opacity-50`}>{busy === 'export' ? 'Exporting…' : 'Export summaries'}</button>
+        <button type="button" onClick={clear} disabled={loading || busy !== null}
+          className={`${BTN_SECONDARY} disabled:opacity-50`}>{busy === 'all' ? 'Clearing…' : 'Clear all tenders'}</button>
+      </>} />
     {error && <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error} <button onClick={load} className="underline">Reload</button></p>}
     <div className={CARD}>
       {loading ? <p className="p-5 text-sm text-muted">Loading tenders…</p> : !tenders.length ? <p className="p-5 text-sm text-muted">No tenders stored.</p> :
