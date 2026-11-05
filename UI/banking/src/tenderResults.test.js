@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { matchCategory, matchScore, prependMatch, sortTenderResults } from './tenderResults.js';
+import { groupTenderResults, matchCategory, matchScore, prependMatch, sortTenderResults } from './tenderResults.js';
 
 test('new streamed matches appear first among ties without duplicating an existing tender', () => {
   const first = { tender: { id: 1 }, match: { matchScore: 90 } };
@@ -8,6 +8,17 @@ test('new streamed matches appear first among ties without duplicating an existi
   const updatedFirst = { tender: { id: 1 }, match: { matchScore: 90, feedback: 'like' } };
   assert.deepEqual(prependMatch(prependMatch([], first), second), [second, first]);
   assert.deepEqual(prependMatch([second, first], updatedFirst), [updatedFirst, second]);
+});
+
+test('similar lots share one ranked group without losing their individual state', () => {
+  const first = { groupKey: 'same', tender: { id: 1 }, match: { matchScore: 90, appliedAt: 'today' } };
+  const second = { groupKey: 'same', tender: { id: 2 }, match: { matchScore: 88 } };
+  const separate = { groupKey: 'other', tender: { id: 3 }, match: { matchScore: 85 } };
+  const unscored = { groupKey: 'same', tender: { id: 4 }, match: { matchScore: 74 } };
+  assert.deepEqual(groupTenderResults([separate, second, first, unscored]), [
+    { key: 'same', lots: [first, second] }, { key: 'other', lots: [separate] }
+  ]);
+  assert.equal(groupTenderResults([{ tender: { id: 5 }, match: { matchScore: 80 } }])[0].key, 'lot:5');
 });
 
 test('fit categories use the requested boundaries without inventing legacy scores', () => {

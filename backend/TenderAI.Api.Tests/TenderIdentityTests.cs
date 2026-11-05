@@ -59,6 +59,45 @@ public class TenderIdentityTests
         Assert.NotEqual(TenderIdentity.For(first), TenderIdentity.For(third));
     }
 
+    [Fact]
+    public void IdentityIgnoresExplicitLotMarkersButNotProductNumbersOrOtherTerms()
+    {
+        var first = Create(520630);
+        first.Name = "Lot №2 / Лот №2: Furniture model 50";
+        first.DetailedName = "Лот №2";
+        var second = Create(520631);
+        second.Name = "Lot №3 / Лот №3: Furniture model 50";
+        second.DetailedName = "Лот №3";
+        Assert.Equal(TenderIdentity.For(first), TenderIdentity.For(second));
+        Assert.Equal(TenderIdentity.GroupKey(first), TenderIdentity.GroupKey(second));
+
+        second.Name = "Lot №3 / Лот №3: Furniture model 51";
+        Assert.NotEqual(TenderIdentity.For(first), TenderIdentity.For(second));
+        second.Name = "Lot №3 / Лот №3: Furniture model 50";
+        second.Products[0].Quantity++;
+        Assert.NotEqual(TenderIdentity.For(first), TenderIdentity.For(second));
+        second.Products[0].Quantity--;
+        second.BuyerName = "Another buyer";
+        Assert.NotEqual(TenderIdentity.For(first), TenderIdentity.For(second));
+        second.BuyerName = first.BuyerName;
+        first.Name = "Pump LOT 200L";
+        second.Name = "Pump LOT 300L";
+        Assert.NotEqual(TenderIdentity.For(first), TenderIdentity.For(second));
+    }
+
+    [Theory]
+    [InlineData("Lot No. 2", "Lot No. 3")]
+    [InlineData("LOT #2", "lot #3")]
+    [InlineData("Лот 2", "Лот 3")]
+    public void IdentityHandlesLotMarkerVariants(string firstName, string secondName)
+    {
+        var first = Create(1);
+        var second = Create(2);
+        first.Name = firstName;
+        second.Name = secondName;
+        Assert.Equal(TenderIdentity.For(first), TenderIdentity.For(second));
+    }
+
     private static TenderEntity Create(long id) => new()
     {
         Id = id, DisplayNo = $"LOT-{id}", Source = "UZEX", SourceUrl = $"https://example.test/{id}",

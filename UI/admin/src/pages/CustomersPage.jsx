@@ -31,19 +31,19 @@ export default function CustomersPage({ onToast }) {
       const saved = await generateCustomer();
       if (!Array.isArray(saved) || saved.length !== 1) throw new Error('The server did not confirm one customer was created.');
       setCustomers(prev => [...prev, saved[0]].sort((a, b) => a.customer.customerId.localeCompare(b.customer.customerId)));
-      onToast('Demo customer created.');
+      onToast('Customer created.');
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
   }
   async function remove(id) {
-    if (!window.confirm(`Delete ${id} and its demo data?`)) return;
+    if (!window.confirm(`Delete ${id} and its associated data?`)) return;
     setBusy(true);
     try { await deleteCustomer(id); setCustomers(prev => prev.filter(c => c.customer.customerId !== id)); setSelected(null); }
     catch (err) { setError(err.message); }
     finally { setBusy(false); }
   }
   async function clear() {
-    if (!window.confirm('Delete all customers and their demo data?')) return;
+    if (!window.confirm('Delete all customers and their associated data?')) return;
     setBusy(true);
     try { await clearCustomers(); setCustomers([]); setSelected(null); }
     catch (err) { setError(err.message); }

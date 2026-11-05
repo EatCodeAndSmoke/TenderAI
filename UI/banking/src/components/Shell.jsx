@@ -40,7 +40,7 @@ export default function Shell() {
               <BellIcon className="size-6" />
               {(unreadCount > 0 || updatesError) && <span aria-hidden="true" className="notification-badge absolute right-0 top-0 grid min-h-4 min-w-4 place-items-center rounded-full bg-brand-300 px-1 text-[10px] font-bold text-cobalt">{updatesError ? '!' : unreadCount}</span>}
             </Link>
-            <span className="sr-only" aria-live="polite">{!updatesError && unreadCount > 0 ? `${unreadCount} unread demo notification${unreadCount === 1 ? '' : 's'}` : ''}</span>
+            <span className="sr-only" aria-live="polite">{!updatesError && unreadCount > 0 ? `${unreadCount} unread notification${unreadCount === 1 ? '' : 's'}` : ''}</span>
             <button
               type="button"
               onClick={handleLogout}
