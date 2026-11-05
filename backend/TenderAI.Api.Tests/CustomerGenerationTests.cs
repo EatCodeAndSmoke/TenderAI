@@ -65,6 +65,7 @@ public class CustomerGenerationTests
             Assert.Equal(20, customers.Select(c => c.CustomerId).Distinct(StringComparer.OrdinalIgnoreCase).Count());
             Assert.Equal(20, customers.Select(c => c.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count());
             Assert.Equal(20, customers.Select(c => c.TaxCode).Distinct().Count());
+            Assert.Equal(20, customers.Select(c => c.Industry!.IndustryCode).Distinct().Count());
             Assert.DoesNotContain(customers, customer => customer.CustomerId == "C-01" || customer.TaxCode == "300000001");
             Assert.Equal(60, await setup.CustomerAccounts.CountAsync());
         }
@@ -72,6 +73,25 @@ public class CustomerGenerationTests
         {
             foreach (var db in contexts) await db.DisposeAsync();
         }
+    }
+
+    [Fact]
+    public async Task GenerationUsesDiverseActivitiesBeforeRepeating()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options;
+        await using var db = new TenderAiDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var generator = new CustomerGenerationService(db);
+        var generated = new List<CustomerRecordDto>();
+        for (var i = 0; i < 33; i++)
+            generated.Add(Assert.Single(await generator.GenerateAsync(CancellationToken.None)));
+
+        var codes = generated.Select(record => record.Customer!.Industry!.IndustryCode).ToArray();
+        Assert.Equal(32, codes.Take(32).Distinct().Count());
+        Assert.True(codes.Select(code => code[..2]).Distinct().Count() >= 10);
+        Assert.All(generated, record => Assert.Equal(2, record.RecentPayments.Count(payment => payment.IsIncoming)));
     }
 
     [Fact]
@@ -102,5 +122,50 @@ public class CustomerGenerationTests
         Assert.Equal("Bread delivery", Assert.Single(saved.Payments).PurposeDescription);
         Assert.Equal(200_000_000, saved.RiskFeatures!.PreApprovedLimit);
         Assert.Equal(3, saved.Accounts.Count);
+    }
+
+    [Fact]
+    public async Task CustomerUpdatePersistsEditedProfileRiskAndPaymentsWithoutChangingAccounts()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options;
+        await using var db = new TenderAiDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var controller = new CustomersController(db);
+        var generated = Assert.Single(await new CustomerGenerationService(db).GenerateAsync(CancellationToken.None));
+        var id = generated.Customer!.CustomerId;
+        var originalAccounts = await db.CustomerAccounts.AsNoTracking().Where(a => a.CustomerId == id)
+            .OrderBy(a => a.Currency).Select(a => new { a.Iban, a.Currency, a.Balance }).ToListAsync();
+        db.ChangeTracker.Clear();
+
+        generated.Customer.Name = "Edited business";
+        generated.Customer.Industry = new IndustryDto { IndustryCode = "49410", Name = "Freight transport by road" };
+        generated.Customer.Address!.RegionName = "Bukhara";
+        generated.RiskFeatures!.KycPassed = false;
+        generated.RiskFeatures.PreApprovedLimit = null;
+        generated.OnRegister = true;
+        generated.RecentPayments =
+        [
+            new PaymentDto { Date = new DateOnly(2026, 10, 1), IsIncoming = false, PurposeDescription = "Fuel purchase", Amount = null },
+            new PaymentDto { Date = new DateOnly(2026, 10, 2), IsIncoming = true, PurposeDescription = "Freight services", Amount = 0 }
+        ];
+
+        var response = await controller.Update(id.ToLowerInvariant(), generated, CancellationToken.None);
+        Assert.Equal("Edited business", response.Value!.Customer!.Name);
+        db.ChangeTracker.Clear();
+        var persisted = (await controller.Get(id, CancellationToken.None)).Value!;
+        Assert.Equal("Edited business", persisted.Customer!.Name);
+        Assert.Equal("49410", persisted.Customer.Industry!.IndustryCode);
+        Assert.Equal("Bukhara", persisted.Customer.Address!.RegionName);
+        Assert.False(persisted.RiskFeatures!.KycPassed);
+        Assert.Null(persisted.RiskFeatures.PreApprovedLimit);
+        Assert.True(persisted.OnRegister);
+        Assert.Equal(2, persisted.RecentPayments.Count);
+        Assert.Contains(persisted.RecentPayments, p => p.PurposeDescription == "Fuel purchase" && !p.IsIncoming && p.Amount is null);
+        Assert.Contains(persisted.RecentPayments, p => p.PurposeDescription == "Freight services" && p.IsIncoming && p.Amount == 0);
+        var accounts = await db.CustomerAccounts.AsNoTracking().Where(a => a.CustomerId == id)
+            .OrderBy(a => a.Currency).Select(a => new { a.Iban, a.Currency, a.Balance }).ToListAsync();
+        Assert.Equal(originalAccounts, accounts);
     }
 }

@@ -29,7 +29,29 @@ namespace TenderAI.Api.Services
             new("46510", "Wholesale of computers and peripheral equipment", "computer equipment supply", "laptops and accessories", "computer stock"),
             new("62010", "Computer programming activities", "software development services", "software maintenance", "software licenses"),
             new("46690", "Wholesale of machinery and equipment", "laboratory equipment supply", "machinery and equipment", "equipment stock"),
-            new("46470", "Wholesale of furniture and lighting equipment", "office furniture supply", "lighting equipment", "furniture stock")
+            new("46470", "Wholesale of furniture and lighting equipment", "office furniture supply", "lighting equipment", "furniture stock"),
+            new("01110", "Growing of cereals and legumes", "wheat and grain supply", "dried legumes", "seeds and fertilizer"),
+            new("01210", "Growing of grapes", "fresh grape supply", "table grapes", "vineyard supplies"),
+            new("01410", "Raising of dairy cattle", "fresh milk supply", "dairy cattle products", "animal feed"),
+            new("01610", "Support activities for crop production", "crop harvesting services", "field preparation services", "agricultural supplies"),
+            new("14130", "Manufacture of outerwear", "workwear production", "uniform supply", "fabric and thread"),
+            new("18120", "Printing services", "brochure printing", "printed forms and labels", "paper and ink"),
+            new("22220", "Manufacture of plastic packing goods", "plastic packaging supply", "packaging containers", "plastic materials"),
+            new("25110", "Manufacture of metal structures", "metal structure fabrication", "steel frames and components", "steel and fasteners"),
+            new("31010", "Manufacture of office furniture", "office desk production", "office cabinets", "timber and fittings"),
+            new("43210", "Electrical installation", "electrical installation work", "building wiring services", "electrical cables"),
+            new("43220", "Plumbing and heating installation", "plumbing installation work", "heating system repairs", "pipes and fittings"),
+            new("43320", "Joinery installation", "door and window installation", "interior joinery work", "doors and hardware"),
+            new("49390", "Other passenger land transport", "staff transportation services", "passenger bus hire", "vehicle fuel"),
+            new("49410", "Freight transport by road", "road freight delivery", "cargo transportation", "vehicle fuel"),
+            new("52100", "Warehousing and storage", "warehouse storage services", "inventory handling services", "warehouse supplies"),
+            new("56100", "Restaurants and mobile food service", "meal catering services", "prepared meals", "food ingredients"),
+            new("71120", "Engineering activities and technical consultancy", "engineering design services", "technical consultancy", "engineering software"),
+            new("73110", "Advertising agencies", "advertising campaign services", "marketing materials", "advertising supplies"),
+            new("77320", "Renting of construction machinery", "construction equipment rental", "excavator rental", "machinery maintenance"),
+            new("80100", "Private security activities", "building security services", "security patrol services", "security equipment"),
+            new("81300", "Landscape service activities", "landscaping services", "garden maintenance", "plants and gardening supplies"),
+            new("86210", "General medical practice", "medical consultation services", "health examination services", "medical supplies")
         ];
 
         public async Task<IReadOnlyList<CustomerRecordDto>> GenerateAsync(CancellationToken ct)
@@ -38,7 +60,7 @@ namespace TenderAI.Api.Services
             try
             {
                 var existing = await db.Customers.AsNoTracking()
-                    .Select(customer => new { customer.CustomerId, customer.TaxCode, customer.Name })
+                    .Select(customer => new { customer.CustomerId, customer.TaxCode, customer.Name, customer.IndustryCode })
                     .ToListAsync(ct);
                 var ids = existing.Select(customer => customer.CustomerId).ToHashSet(StringComparer.OrdinalIgnoreCase);
                 var taxCodes = existing.Select(customer => customer.TaxCode).ToHashSet(StringComparer.Ordinal);
@@ -66,7 +88,10 @@ namespace TenderAI.Api.Services
 
                 var today = DateOnly.FromDateTime(DateTime.Today);
                 var monthsWithBank = Random.Shared.Next(6, 61);
-                var profile = Pick(Profiles);
+                var profileCounts = existing.GroupBy(customer => customer.IndustryCode, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
+                var minimumCount = Profiles.Min(candidate => profileCounts.GetValueOrDefault(candidate.Code));
+                var profile = Pick(Profiles.Where(candidate => profileCounts.GetValueOrDefault(candidate.Code) == minimumCount).ToArray());
                 var overdue = Random.Shared.Next(3) == 0;
                 var customer = new CustomerEntity
                 {
