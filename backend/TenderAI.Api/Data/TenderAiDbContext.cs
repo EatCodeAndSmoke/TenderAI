@@ -115,6 +115,7 @@ namespace TenderAI.Api.Data
                 b.ToTable("TenderFeedback");
                 b.HasKey(f => new { f.CustomerId, f.TenderId });
                 b.Property(f => f.Value).HasMaxLength(7);
+                b.Property(f => f.Comment).HasMaxLength(500);
                 b.HasOne<CustomerEntity>().WithMany().HasForeignKey(f => f.CustomerId).OnDelete(DeleteBehavior.Cascade);
                 b.HasOne<TenderEntity>().WithMany().HasForeignKey(f => f.TenderId).OnDelete(DeleteBehavior.Cascade);
             });
@@ -123,6 +124,7 @@ namespace TenderAI.Api.Data
             {
                 b.ToTable("TenderApplications");
                 b.HasKey(a => new { a.CustomerId, a.TenderId });
+                b.Property(a => a.SimulatedOutcome).HasMaxLength(20);
                 b.HasOne<CustomerEntity>().WithMany().HasForeignKey(a => a.CustomerId).OnDelete(DeleteBehavior.Cascade);
                 b.HasOne<TenderEntity>().WithMany().HasForeignKey(a => a.TenderId).OnDelete(DeleteBehavior.Cascade);
             });

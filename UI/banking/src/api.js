@@ -41,8 +41,11 @@ export const authenticate = (customerId, password) =>
 export const getCustomer = customerId => request(`/customers/${encodeURIComponent(customerId)}`);
 export const getMatches = customerId => request(`/customers/${encodeURIComponent(customerId)}/matches`);
 export const getDiscoveries = customerId => request(`/customers/${encodeURIComponent(customerId)}/discoveries`);
-export const setFeedback = (customerId, tenderId, value) =>
-  request(`/customers/${encodeURIComponent(customerId)}/tenders/${tenderId}/feedback`, { method: 'PUT', body: JSON.stringify({ value }) });
+export const getApplicationUpdates = customerId => request(`/customers/${encodeURIComponent(customerId)}/notifications`);
+export const markApplicationUpdatesRead = (customerId, tenderIds) =>
+  request(`/customers/${encodeURIComponent(customerId)}/notifications/read`, { method: 'PUT', body: JSON.stringify({ tenderIds }) });
+export const setFeedback = (customerId, tenderId, value, comment = null) =>
+  request(`/customers/${encodeURIComponent(customerId)}/tenders/${tenderId}/feedback`, { method: 'PUT', body: JSON.stringify({ value, comment }) });
 export const applyForTender = (customerId, tenderId) =>
   request(`/customers/${encodeURIComponent(customerId)}/tenders/${tenderId}/application`, { method: 'PUT' });
 

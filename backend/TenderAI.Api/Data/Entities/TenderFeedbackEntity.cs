@@ -5,5 +5,6 @@ namespace TenderAI.Api.Data.Entities
         public required string CustomerId { get; set; }
         public long TenderId { get; set; }
         public required string Value { get; set; }
+        public string? Comment { get; set; }
     }
 }

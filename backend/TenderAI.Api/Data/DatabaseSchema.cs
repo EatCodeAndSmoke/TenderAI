@@ -57,6 +57,9 @@ namespace TenderAI.Api.Data
                 AddColumnIfMissing(db, connection, "Notifications", "MatchScore");
                 AddColumnIfMissing(db, connection, "Notifications", "LoanDecisionReason");
                 AddColumnIfMissing(db, connection, "Notifications", "WhyText");
+                AddColumnIfMissing(db, connection, "TenderFeedback", "Comment");
+                AddColumnIfMissing(db, connection, "TenderApplications", "SimulatedOutcome");
+                AddColumnIfMissing(db, connection, "TenderApplications", "NotificationReadAt");
             }
             finally
             {
@@ -149,6 +152,9 @@ namespace TenderAI.Api.Data
                     ("Notifications", "MatchScore") => "ALTER TABLE \"Notifications\" ADD COLUMN \"MatchScore\" INTEGER NULL",
                     ("Notifications", "LoanDecisionReason") => "ALTER TABLE \"Notifications\" ADD COLUMN \"LoanDecisionReason\" TEXT NOT NULL DEFAULT ''",
                     ("Notifications", "WhyText") => "ALTER TABLE \"Notifications\" ADD COLUMN \"WhyText\" TEXT NOT NULL DEFAULT ''",
+                    ("TenderFeedback", "Comment") => "ALTER TABLE \"TenderFeedback\" ADD COLUMN \"Comment\" TEXT NULL",
+                    ("TenderApplications", "SimulatedOutcome") => "ALTER TABLE \"TenderApplications\" ADD COLUMN \"SimulatedOutcome\" TEXT NULL",
+                    ("TenderApplications", "NotificationReadAt") => "ALTER TABLE \"TenderApplications\" ADD COLUMN \"NotificationReadAt\" TEXT NULL",
                     _ => throw new ArgumentOutOfRangeException(nameof(column), $"Unsupported schema column {table}.{column}.")
                 };
                 db.Database.ExecuteSqlRaw(sql);
