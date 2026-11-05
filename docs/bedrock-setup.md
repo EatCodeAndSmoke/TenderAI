@@ -11,7 +11,7 @@ Nova Micro has Geo inference, but not in-Region inference, in Frankfurt. The EU 
 
 Selecting **Find tenders for me** in Business Banking evaluates the signed-in customer against the list of currently open UZEX tenders. The model receives the customer ID, OKED code/activity, location, up to 30 incoming-payment descriptions from the preceding 12 months, and each open tender's ID, location, description, and product details. Customer names, TINs, balances, pre-approved limits, and overdue data are not sent to Bedrock. The model is instructed to identify what the buyer is procuring and what the customer sells, then match only when both OKED activity and incoming-payment evidence support selling goods or services in the same specific category. A related industry, material used, or shared keyword is not sufficient; location is a preference, not a requirement. Incomplete or ambiguous evidence should be excluded.
 
-Business Banking searches for up to three new matches by default, streaming matching stored tenders first and importing more from UZEX as needed. While searching, the UI shows the number of tenders evaluated and new matches found; checked counts include all tenders in an evaluated batch, even if the target is reached before every result is saved. Evaluated tenders are recorded per customer, so subsequent searches continue with unseen tenders rather than repeating earlier results; other customers can still be evaluated against them. Different lot IDs with the same normalized buyer, product, and key source terms are shown once per customer. Opening and closing dates must match, but their times may differ; prices, quantities, descriptions and other recorded terms must match. Linked technical documents are not parsed or compared, so grouping cannot account for differences inside them. Disliking a displayed duplicate hides all copies; existing feedback and applications remain in the database. An open saved copy is shown ahead of a closed copy. Saved matches remain visible across searches and visits until disliked or deleted. Expired matches remain visible as closed and cannot be applied for. Fewer new matches are returned if fewer are found. A search checks at most 50 newly imported tenders; if that limit is reached, the customer can search again. API callers may still request 1–10 matches explicitly. Likes and dislikes persist per customer, and disliked tenders are excluded from later searches. Editing a customer or changing the matching prompt allows previously evaluated nonmatches to be checked again without rediscovering saved matches. Deleting an individual tender retains a hidden record to prevent reimport; the admin's **Clear all tenders** action permanently removes every tender, deletion marker, product, match, discovery history, feedback, and application, so lots may be imported again.
+Business Banking searches for up to three new matches by default, streaming matching stored tenders first and importing more from UZEX as needed. While searching, the UI shows the number of tenders evaluated and new matches found; checked counts include all tenders in an evaluated batch, even if the target is reached before every result is saved. Evaluated tenders are recorded per customer, so subsequent searches continue with unseen tenders rather than repeating earlier results; other customers can still be evaluated against them. Different lot IDs with the same normalized buyer, product, and key source terms are shown once per customer. Opening and closing dates must match, but their times may differ; prices, quantities, descriptions and other recorded terms must match. Linked technical documents are not parsed or compared, so grouping cannot account for differences inside them. Disliking a displayed duplicate hides all copies; existing feedback and applications remain in the database. An open saved copy is shown ahead of a closed copy. Saved matches remain visible across searches and visits until disliked or deleted. Expired matches remain visible as closed and cannot be applied for. Fewer new matches are returned if fewer are found. A search checks at most 50 newly imported tenders; if that limit is reached, the customer can search again. API callers may still request 1–10 matches explicitly. Likes and dislikes persist per customer, and disliked tenders are excluded from later searches. Editing a customer or changing the matching prompt allows previously evaluated nonmatches to be checked again without rediscovering saved matches. Deleting an individual tender permanently removes its product, matches, discovery history, feedback and applications for all customers; it can be imported again. Previously soft-deleted lots are eligible for reimport, at which point their old records are replaced. The admin's **Clear all tenders** action permanently removes every tender and related customer record.
 
 New matches appear at the top as they stream in. Customers can mark a matched tender as **Applied**; this records a request for preparation in the demo database and does not submit an application to UZEX or trigger a real preparation process. Application records are separate from likes and dislikes, survive later searches, and are removed if the associated customer or tender is deleted.
 
@@ -48,6 +48,34 @@ Attach a policy like the following to the EC2 instance-profile role used by the 
 ```
 
 AWS requires permission on both the inference-profile resource and the foundation-model resource in every Region that profile can route to. If the application later uses streaming inference, add `bedrock:InvokeModelWithResponseStream` as well. This service does not create, list, or manage inference profiles, so profile-management permissions are not needed.
+
+## Switching to Nova Pro
+
+The existing matching and summarization services use the same configured model. Nova Pro uses the same Nova 1 Invoke API, so switching models does not require changing either service:
+
+1. In the AWS EC2 console, select the API's instance and open its **Security** tab to find the attached IAM role. In IAM, add the following policy to that role, replacing `<ACCOUNT_ID>` with your AWS account ID. Keep the Micro policy if you want to be able to switch back.
+2. In GitHub, open the repository's **Settings → Secrets and variables → Actions → Variables** and create or update the repository variable `BEDROCK_MODEL_ID` to `eu.amazon.nova-pro-v1:0`. Set `BEDROCK_REGION` to `eu-central-1` if it is not already set to that value.
+3. In **Actions → Deploy TenderAI**, select **Run workflow**, choose `main`, and run it. The self-hosted runner must be online. Changing a variable alone does not restart the API.
+4. After the deployment succeeds, try a new search and a newly imported tender. Check the API logs for Bedrock authorization or configuration errors if matching or summarization fails.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": "bedrock:InvokeModel",
+    "Resource": [
+      "arn:aws:bedrock:eu-central-1:<ACCOUNT_ID>:inference-profile/eu.amazon.nova-pro-v1:0",
+      "arn:aws:bedrock:eu-central-1::foundation-model/amazon.nova-pro-v1:0",
+      "arn:aws:bedrock:eu-north-1::foundation-model/amazon.nova-pro-v1:0",
+      "arn:aws:bedrock:eu-west-1::foundation-model/amazon.nova-pro-v1:0",
+      "arn:aws:bedrock:eu-west-3::foundation-model/amazon.nova-pro-v1:0"
+    ]
+  }]
+}
+```
+
+This EU profile can route requests among Frankfurt, Stockholm, Ireland, and Paris. Check for organization-level restrictions or account-level model access if invocation is denied. Nova Pro is billed at different rates from Micro; check the current [Bedrock pricing](https://aws.amazon.com/bedrock/pricing/) for your Region. Switching models does not regenerate saved summaries or matches or clear evaluated-tender history. If a full reset is intended, **Clear all tenders** removes those records, including likes and applications, and allows lots to be imported and evaluated again. Review new results: a stronger model is not a guarantee of correct matching or summaries.
 
 ## Configuration
 

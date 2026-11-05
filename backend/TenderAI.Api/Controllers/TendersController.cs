@@ -116,10 +116,7 @@ namespace TenderAI.Api.Controllers
             if (tender is null) return NotFound();
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
             await db.Notifications.Where(n => n.LotId == id.ToString()).ExecuteDeleteAsync(ct);
-            await db.TenderFeedback.Where(f => f.TenderId == id).ExecuteDeleteAsync(ct);
-            await db.TenderApplications.Where(a => a.TenderId == id).ExecuteDeleteAsync(ct);
-            await db.TenderDiscoverySeen.Where(s => s.TenderId == id).ExecuteDeleteAsync(ct);
-            tender.IsDeleted = true;
+            db.Tenders.Remove(tender);
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
             return NoContent();

@@ -16,7 +16,7 @@ export default function TendersPage({ onToast }) {
   }, []);
   useEffect(() => { load(); }, [load]);
   async function remove(tender) {
-    if (!window.confirm(`Delete tender ${tender.displayNo} for all customers?`)) return;
+    if (!window.confirm(`Delete tender ${tender.displayNo} and its matches, feedback and applications for all customers? It can be imported again.`)) return;
     setBusy(tender.id); setError('');
     try {
       await deleteTender(tender.id);
@@ -36,7 +36,7 @@ export default function TendersPage({ onToast }) {
     finally { setBusy(null); }
   }
   return <section>
-    <PageHeader title="Tenders" summary="Manage stored UZEX tenders. Deleting one tender hides it from future imports; clearing all allows reimport."
+    <PageHeader title="Tenders" summary="Manage stored UZEX tenders. Deleted tenders can be imported again."
       actions={<button type="button" onClick={clear} disabled={loading || busy !== null}
         className={`${BTN_SECONDARY} disabled:opacity-50`}>{busy === 'all' ? 'Clearing…' : 'Clear all tenders'}</button>} />
     {error && <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error} <button onClick={load} className="underline">Reload</button></p>}
