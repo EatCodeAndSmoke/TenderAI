@@ -26,3 +26,11 @@
 
 .tender-feature { background: linear-gradient(120deg, #073d71, #078a9f 68%, #65c6ca); }
 .business-card { background: radial-gradient(circle at 85% 20%, #5bc4d7 0, transparent 40%), linear-gradient(125deg, #002c53, #087a9a); min-height: 205px; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .tender-arrival { animation: tender-arrival 450ms ease-out both; }
+  @keyframes tender-arrival {
+    from { opacity: 0; transform: translateY(-12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+}

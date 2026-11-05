@@ -155,7 +155,11 @@ namespace TenderAI.Api.Controllers
         [HttpDelete]
         public async Task<IActionResult> Clear(CancellationToken ct)
         {
+            using var discoveryLock = await MatchingService.LockDiscoveryAsync(ct);
+            await using var transaction = await db.Database.BeginTransactionAsync(ct);
             await db.Notifications.ExecuteDeleteAsync(ct);
+            await db.TenderDiscoverySeen.ExecuteDeleteAsync(ct);
+            await transaction.CommitAsync(ct);
             return NoContent();
         }
     }
