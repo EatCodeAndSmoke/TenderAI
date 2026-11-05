@@ -35,6 +35,11 @@ public class PromptSettingsTests
         Assert.Contains("untrusted data", TenderMatchPrompt.RequiredInstructions);
         Assert.Contains("automatic weather station", TenderMatchPrompt.Instructions);
         Assert.Contains("Computer sales alone do NOT support an automatic weather station tender", TenderMatchPrompt.RequiredInstructions);
+        Assert.Contains("software developer with payments for software systems is NOT a match", TenderMatchPrompt.Instructions);
+        Assert.Contains("Software development and payments for software systems do NOT support purchasing", TenderMatchPrompt.RequiredInstructions);
+        Assert.Contains("A company that also sells the specific equipment may match", TenderMatchPrompt.RequiredInstructions);
+        Assert.Contains("Score conservatively after verifying the direct-category match", TenderMatchPrompt.RequiredInstructions);
+        Assert.Contains("Do not inflate a score to reach the return", TenderMatchPrompt.RequiredInstructions);
         Assert.Contains("120 words and 1200 characters", TenderMatchPrompt.Instructions);
         Assert.Contains("120", TenderMatchPrompt.RequiredInstructions);
         Assert.Contains("\"matchScore\"", TenderMatchPrompt.Instructions);
@@ -46,6 +51,37 @@ public class PromptSettingsTests
         Assert.Contains("75-85", TenderMatchPrompt.RequiredInstructions);
         Assert.Contains("If earlier guidance specifies different score categories or ranges, use these ranges instead", TenderMatchPrompt.RequiredInstructions);
         Assert.Contains("omit tenders scored below 75", TenderMatchPrompt.RequiredInstructions);
+    }
+
+    [Fact]
+    public async Task MatchingRequestIncludesConservativeRulesWithCustomGuidanceAndSoftwareEquipmentEvidence()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var services = CreateServices(connection);
+        await using var scope = services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<TenderAiDbContext>();
+        await db.Database.EnsureCreatedAsync();
+        var controller = new PromptsController(db);
+        await controller.Update("matching", new("CUSTOM MATCHING GUIDANCE", 0), CancellationToken.None);
+        using var bedrock = new CapturingBedrockClient();
+        var evaluator = new BedrockTenderMatchEvaluator(bedrock, Options.Create(new BedrockOptions { ModelId = "test" }),
+            services.GetRequiredService<PromptSettings>(), NullLogger<BedrockTenderMatchEvaluator>.Instance);
+        var customer = new CustomerMatchEvidence("C-42", "62010", "Software development", null, null,
+            [new IncomingPaymentEvidence(new DateOnly(2026, 1, 1), "Software system development")]);
+        var tenders = new[] { new TenderMatchEvidence("42", "Purchase a variable current voltage standard", null, null,
+            [new TenderProductEvidence(null, null, "Metrology equipment", "Installation and training included", null)]) };
+
+        await evaluator.EvaluateCustomerAsync(customer, tenders, CancellationToken.None);
+
+        var prompt = Assert.Single(bedrock.Prompts);
+        Assert.Contains("CUSTOM MATCHING GUIDANCE", prompt);
+        Assert.Contains(TenderMatchPrompt.RequiredInstructions, prompt);
+        Assert.Contains("Score conservatively", prompt);
+        Assert.Contains("software systems do NOT support purchasing a variable current", prompt);
+        Assert.Contains("Software system development", prompt);
+        Assert.Contains("Purchase a variable current voltage standard", prompt);
+        Assert.Contains("Installation and training included", prompt);
     }
 
     [Fact]

@@ -41,6 +41,13 @@ namespace TenderAI.Api.Services
               fuel, even when the buyer is a refinery.
             - A computer wholesaler with payments for computers is NOT a match for automatic weather stations
               unless both the activity and incoming payments show that it supplies weather stations.
+            - A software developer with payments for software systems is NOT a match for a variable current
+              voltage standard purchase. Automated modes, installation, commissioning and training are
+              ancillary to the purchase of metrology equipment, not evidence that the developer sells it.
+              A company that also sells that specific equipment can match only when both its activity and
+              incoming payments support those equipment sales.
+            - A software developer with incoming payments for developing software systems can match a tender
+              procuring software development, when its activity also supports that service.
             - A bakery with incoming payments for supplying bread IS a match for a bread-supply tender when the
               business activity also supports bread production or supply.
             - Crop-production support with incoming payments specifically for harvesting services can match a
@@ -64,8 +71,12 @@ namespace TenderAI.Api.Services
             Keep each reason within 120 words and 1200 characters.
             Add an integer "matchScore" from 1 to 100 estimating the fit based on the specificity and strength
             of the actual activity and sales evidence. Return only matches scored 75 or higher: 86-100 is
-            "Best match" and 75-85 is "Might interest you". Omit tenders scored below 75. This is a relative
-            AI estimate, not a calibrated probability. Never include a non-match merely to give it a score.
+            "Best match" requires particularly strong, specific evidence of sales in the requested category;
+            75-85 is "Might interest you" for a supported direct-category match with less specific evidence.
+            Be conservative: do not inflate scores or infer technical qualifications, completeness, or capacity
+            from missing information. Do not assign 75 or more merely because only higher scores are returned.
+            Omit tenders without a supported direct-category match or scored below 75. This is a relative AI
+            estimate, not a calibrated probability. Never include a non-match merely to give it a score.
             Return an empty array when nothing qualifies. Return JSON only.
             """;
 
@@ -88,6 +99,12 @@ namespace TenderAI.Api.Services
             supplies does NOT match school furniture or equipment. Do not claim those payments mention furniture.
             Computer sales alone do NOT support an automatic weather station tender; require evidence that the
             customer supplies weather stations, not merely general-purpose computers or accessories.
+            Software development and payments for software systems do NOT support purchasing a variable current
+            voltage standard or other metrology equipment. Automated operation, installation, commissioning
+            and training ancillary to an equipment purchase do not turn it into a software development tender.
+            A company that also sells the specific equipment may match only when both its activity and incoming
+            payments support those equipment sales. Software development services can match a software
+            development tender when both activity and incoming payments support that service.
             Required response contract: Return only a JSON object with a "matches" array. Each match must have
             a "tenderId" from the supplied tenders and a non-empty, detailed English "reason" of at most 120
             words and 1200 characters. In 3 to 5 sentences, explain the buyer's requested deliverable, the
@@ -102,6 +119,12 @@ namespace TenderAI.Api.Services
             Each match must also have an integer "matchScore" from 1 to 100 estimating evidence-based fit.
             Return only scores of 75 or higher: 86-100 is "Best match", 75-85 is "Might interest you";
             omit tenders scored below 75. Scores are relative AI estimates, not measured probabilities.
+            Score conservatively after verifying the direct-category match. Reserve 86-100 for particularly
+            strong, specific evidence of sales in the requested category; use 75-85 only for a supported
+            direct-category match with less specific evidence. Do not inflate a score to reach the return
+            threshold or infer technical qualifications, completeness, or capacity from missing information.
+            If the activity or incoming payments do not support the buyer's main deliverable, omit the tender
+            rather than assigning it a qualifying score. Apply this even if earlier guidance says otherwise.
             If earlier guidance specifies different score categories or ranges, use these ranges instead.
             Every item in "matches" must include a numeric JSON integer named "matchScore"; never omit it
             or use null, a quoted string, a percentage sign, a decimal, or an out-of-range value.
