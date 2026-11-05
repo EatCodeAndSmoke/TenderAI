@@ -63,8 +63,8 @@ namespace TenderAI.Api.Services
             qualifications, capabilities or facts to make an explanation longer. Avoid generic claims and templates.
             Keep each reason within 120 words and 1200 characters.
             Add an integer "matchScore" from 1 to 100 estimating the fit based on the specificity and strength
-            of the actual activity and sales evidence. Return only matches scored 75 or higher: 85-100 is
-            "Best match" and 75-84 is "Might interest you". Omit tenders scored below 75. This is a relative
+            of the actual activity and sales evidence. Return only matches scored 75 or higher: 86-100 is
+            "Best match" and 75-85 is "Might interest you". Omit tenders scored below 75. This is a relative
             AI estimate, not a calibrated probability. Never include a non-match merely to give it a score.
             Return an empty array when nothing qualifies. Return JSON only.
             """;
@@ -100,8 +100,9 @@ namespace TenderAI.Api.Services
             Write the reason directly to the business in friendly, clear English, not as an internal assessment;
             avoid technical terms like "OKED code", "incoming payment evidence" and "direct category match".
             Each match must also have an integer "matchScore" from 1 to 100 estimating evidence-based fit.
-            Return only scores of 75 or higher: 85-100 is "Best match", 75-84 is "Might interest you";
+            Return only scores of 75 or higher: 86-100 is "Best match", 75-85 is "Might interest you";
             omit tenders scored below 75. Scores are relative AI estimates, not measured probabilities.
+            If earlier guidance specifies different score categories or ranges, use these ranges instead.
             Every item in "matches" must include a numeric JSON integer named "matchScore"; never omit it
             or use null, a quoted string, a percentage sign, a decimal, or an out-of-range value.
             Each match object must contain all three required fields: "tenderId", "reason", and "matchScore".
