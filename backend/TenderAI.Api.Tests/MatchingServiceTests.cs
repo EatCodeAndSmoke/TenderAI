@@ -27,7 +27,7 @@ public class MatchingServiceTests
         db.Customers.AddRange(CreateCustomer("C-01", 100_000_000), CreateCustomer("C-02", 100_000_000));
         db.Tenders.Add(CreateTender());
         await db.SaveChangesAsync();
-        var evaluator = new FakeMatchEvaluator([new TenderCandidateMatch("511680", "The activity and incoming payments support this tender.")]);
+        var evaluator = new FakeMatchEvaluator([new TenderCandidateMatch("511680", "The activity and incoming payments support this tender.", 88)]);
         var service = CreateService(db, evaluator);
         var events = new List<MatchRunEvent>();
         await foreach (var item in service.RunStreamingAsync(CancellationToken.None, "C-02")) events.Add(item);
@@ -48,6 +48,8 @@ public class MatchingServiceTests
         await using var db = new TenderAiDbContext(options);
         await db.Database.EnsureCreatedAsync();
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"Notifications\" DROP COLUMN \"WhyText\"");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"Notifications\" DROP COLUMN \"MatchScore\"");
+        DatabaseSchema.AddMissingColumns(db);
         DatabaseSchema.AddMissingColumns(db);
 
         var customer = CreateCustomer("C-01", preApprovedLimit: 80_000_000);
@@ -77,13 +79,14 @@ public class MatchingServiceTests
         await db.SaveChangesAsync();
 
         var evaluator = new FakeMatchEvaluator(
-            [new TenderCandidateMatch("511680", "OKED 10710 and incoming bread payments support this tender.")]);
+            [new TenderCandidateMatch("511680", "OKED 10710 and incoming bread payments support this tender.", 88)]);
         var events = await CollectEvents(CreateService(db, evaluator));
 
         var result = Assert.Single(events, runEvent => runEvent.Type == "customer-completed");
         var match = Assert.Single(result.Matches!);
         Assert.Equal("C-01", match.CustomerId);
         Assert.Equal("511680", match.LotId);
+        Assert.Equal(88, match.MatchScore);
         Assert.Equal("Purchase of bread for school kitchens", match.TenderTitle);
         Assert.Equal(80_000_000L, match.Offer?.Financing);
         Assert.Equal(3_000_000L, match.Offer?.Guarantee);
@@ -97,6 +100,10 @@ public class MatchingServiceTests
         Assert.Equal(new[] { "511680" }, evaluator.LastTenders!.Select(tender => tender.TenderId));
         Assert.Equal("Purchase of bread for school kitchens", await db.Notifications.Select(notification => notification.Title).SingleAsync());
         Assert.Equal(match.MatchReason, await db.Notifications.Select(notification => notification.WhyText).SingleAsync());
+        Assert.Equal(88, await db.Notifications.Select(notification => notification.MatchScore).SingleAsync());
+        Assert.Equal(88, Assert.Single((await new CustomersController(db).GetMatches("C-01", CancellationToken.None)).Value!).MatchScore);
+        var admin = new MatchesController(db, CreateService(db, evaluator), NullLogger<MatchesController>.Instance);
+        Assert.Equal(88, Assert.Single((await admin.GetAll(CancellationToken.None)).Value!).MatchScore);
     }
 
     [Fact]
@@ -122,7 +129,7 @@ public class MatchingServiceTests
         await db.SaveChangesAsync();
 
         var evaluator = new FakeMatchEvaluator(
-            [new TenderCandidateMatch("511680", "The activity and incoming payments support the requested bread.")]);
+            [new TenderCandidateMatch("511680", "The activity and incoming payments support the requested bread.", 88)]);
         var events = await CollectEvents(CreateService(db, evaluator));
         var results = events.Where(runEvent => runEvent.Type == "customer-completed").ToList();
         var matches = results.SelectMany(runEvent => runEvent.Matches!).ToList();
@@ -155,7 +162,7 @@ public class MatchingServiceTests
         tender.CurrencyCode = "USD";
         db.Tenders.Add(tender);
         await db.SaveChangesAsync();
-        var evaluator = new FakeMatchEvaluator([new TenderCandidateMatch("511680", "Bread sales match the tender.")]);
+        var evaluator = new FakeMatchEvaluator([new TenderCandidateMatch("511680", "Bread sales match the tender.", 88)]);
         var events = await CollectEvents(CreateService(db, evaluator));
         var match = Assert.Single(Assert.Single(events, e => e.Type == "customer-completed").Matches!);
         Assert.Null(match.Offer);
@@ -186,6 +193,9 @@ public class MatchingServiceTests
         db.TenderApplications.Add(new TenderApplicationEntity { CustomerId = customer.CustomerId, TenderId = tender.Id, AppliedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
         db.ChangeTracker.Clear();
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"Notifications\" DROP COLUMN \"MatchScore\"");
+        DatabaseSchema.AddMissingColumns(db);
+        DatabaseSchema.AddMissingColumns(db);
         var customers = new CustomersController(db);
         var admin = new MatchesController(db, CreateService(db, new FakeMatchEvaluator([])), NullLogger<MatchesController>.Instance);
 
@@ -198,6 +208,9 @@ public class MatchingServiceTests
         Assert.Equal(match.Offer, discovery.Match.Offer);
         Assert.Equal(match.Offer, adminMatch.Offer);
         Assert.Equal("Bread sales match.", match.MatchReason);
+        Assert.Null(match.MatchScore);
+        Assert.Null(discovery.Match.MatchScore);
+        Assert.Null(adminMatch.MatchScore);
         Assert.Equal("like", match.Feedback);
         Assert.NotNull(match.AppliedAt);
         Assert.Single(await db.Notifications.ToListAsync());
@@ -250,7 +263,7 @@ public class MatchingServiceTests
         await db.SaveChangesAsync();
 
         var evaluator = new FakeMatchEvaluator(
-            [new TenderCandidateMatch("511680", "OKED 10710 and incoming bread payments support this tender.")],
+            [new TenderCandidateMatch("511680", "OKED 10710 and incoming bread payments support this tender.", 88)],
             failingCustomerId: "C-01");
         var events = await CollectEvents(CreateService(db, evaluator));
 
@@ -311,7 +324,7 @@ public class MatchingServiceTests
             """);
 
         var evaluator = new FakeMatchEvaluator(
-            [new TenderCandidateMatch("511680", "OKED 10710 and incoming bread payments support this tender.")]);
+            [new TenderCandidateMatch("511680", "OKED 10710 and incoming bread payments support this tender.", 88)]);
         var events = await CollectEvents(CreateService(db, evaluator));
 
         Assert.Contains(events, runEvent => runEvent.Type == "customer-error"
@@ -350,7 +363,7 @@ public class MatchingServiceTests
         var controller = new MatchesController(
             db,
             CreateService(db, new FakeMatchEvaluator(
-                [new TenderCandidateMatch("511680", "OKED 10710 and incoming bread payments support this tender.")])),
+                [new TenderCandidateMatch("511680", "OKED 10710 and incoming bread payments support this tender.", 88)])),
             NullLogger<MatchesController>.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = context }
@@ -454,7 +467,7 @@ public class MatchingServiceTests
         Assert.True(reason.Length > 400);
         Assert.True(reason.Split(' ').Length > 45);
 
-        var events = await CollectEvents(CreateService(db, new FakeMatchEvaluator([new TenderCandidateMatch("511680", reason)])));
+        var events = await CollectEvents(CreateService(db, new FakeMatchEvaluator([new TenderCandidateMatch("511680", reason, 88)])));
         Assert.Equal(reason, Assert.Single(Assert.Single(events, e => e.Type == "customer-completed").Matches!).MatchReason);
         db.ChangeTracker.Clear();
         var saved = await db.Notifications.AsNoTracking().SingleAsync();
@@ -475,9 +488,48 @@ public class MatchingServiceTests
         db.Tenders.Add(CreateTender());
         await db.SaveChangesAsync();
         var reason = exceedWords ? string.Join(" ", Enumerable.Repeat("word", 121)) : new string('x', 1201);
-        var events = await CollectEvents(CreateService(db, new FakeMatchEvaluator([new TenderCandidateMatch("511680", reason)])));
+        var events = await CollectEvents(CreateService(db, new FakeMatchEvaluator([new TenderCandidateMatch("511680", reason, 88)])));
         Assert.Contains(events, e => e.Type == "customer-error");
         Assert.Empty(await db.Notifications.ToListAsync());
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(101)]
+    public async Task InvalidMatchScoreIsRejectedBeforePersistence(int score)
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(CreateCustomer("C-01", 100_000_000));
+        db.Tenders.Add(CreateTender());
+        await db.SaveChangesAsync();
+        var events = await CollectEvents(CreateService(db, new FakeMatchEvaluator([new TenderCandidateMatch("511680", "Bread matches.", score)])));
+        Assert.Contains(events, e => e.Type == "customer-error");
+        Assert.Empty(await db.Notifications.ToListAsync());
+    }
+
+    [Fact]
+    public async Task MatchingRunExcludesBelowThresholdWithoutTreatingItAsAnError()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(CreateCustomer("C-01", 100_000_000));
+        db.Tenders.AddRange(CreateTender(), CreateTender(511681));
+        await db.SaveChangesAsync();
+        var evaluator = new FakeMatchEvaluator([
+            new TenderCandidateMatch("511680", "Bread matches.", 74),
+            new TenderCandidateMatch("511681", "Bread matches.", 75)
+        ]);
+        var events = await CollectEvents(CreateService(db, evaluator));
+        Assert.DoesNotContain(events, e => e.Type == "customer-error");
+        var match = Assert.Single(Assert.Single(events, e => e.Type == "customer-completed").Matches!);
+        Assert.Equal("511681", match.LotId);
+        Assert.Equal(75, match.MatchScore);
+        Assert.Equal("511681", (await db.Notifications.SingleAsync()).LotId);
     }
 
     [Fact]

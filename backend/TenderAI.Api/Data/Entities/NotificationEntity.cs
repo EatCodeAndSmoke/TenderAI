@@ -30,6 +30,7 @@ namespace TenderAI.Api.Data.Entities
         public List<string> Requirements { get; set; } = [];
 
         public required string MatchReason { get; set; }
+        public int? MatchScore { get; set; }
         public required string LoanDecisionReason { get; set; }
 
         // Kept populated for existing SQLite databases where this legacy NOT NULL column remains.

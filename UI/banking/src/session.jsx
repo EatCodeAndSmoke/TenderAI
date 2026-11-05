@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { getMatches } from './api.js';
+import { matchCategory } from './tenderResults.js';
 
 const SessionContext = createContext(null);
 const STORAGE_KEY = 'tenderai.banking.session';
@@ -27,7 +28,7 @@ export function SessionProvider({ children }) {
     const id = customer.customerId;
     try {
       const result = await getMatches(id);
-      if (currentId.current === id) { setMatches(result); setMatchesError(''); }
+      if (currentId.current === id) { setMatches(result.filter(matchCategory)); setMatchesError(''); }
     }
     catch (err) { if (currentId.current === id) setMatchesError(err.message); throw err; }
     finally { if (currentId.current === id) setMatchesLoading(false); }
@@ -37,7 +38,10 @@ export function SessionProvider({ children }) {
   }, [customer, refreshMatches]);
   const login = useCallback(value => { currentId.current = value.customerId; setMatches([]); setMatchesLoading(true); setCustomer(value); }, []);
   const logout = useCallback(() => { currentId.current = null; setCustomer(null); setMatches([]); setMatchesError(''); }, []);
-  const rememberMatch = useCallback(match => setMatches(previous => [...previous.filter(m => m.lotId !== match.lotId), match]), []);
+  const rememberMatch = useCallback(match => setMatches(previous => [
+    ...previous.filter(m => m.lotId !== match.lotId),
+    ...(matchCategory(match) ? [match] : [])
+  ]), []);
   const forgetMatch = useCallback(lotId => setMatches(previous => previous.filter(m => m.lotId !== lotId)), []);
   const value = useMemo(() => ({
     customerId: customer?.customerId ?? null, customerName: customer?.name ?? '',

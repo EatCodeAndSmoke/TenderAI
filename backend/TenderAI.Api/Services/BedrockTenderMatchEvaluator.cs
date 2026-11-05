@@ -132,7 +132,12 @@ namespace TenderAI.Api.Services
                     throw new TenderMatchEvaluationException("Amazon Bedrock returned an invalid matching explanation.");
                 }
 
-                result.Add(new TenderCandidateMatch(tenderId, reason));
+                if (match.MatchScore is not (>= 1 and <= 100))
+                {
+                    throw new TenderMatchEvaluationException("Amazon Bedrock returned an invalid matching score.");
+                }
+
+                result.Add(new TenderCandidateMatch(tenderId, reason, match.MatchScore.Value));
             }
 
             return result;
@@ -205,6 +210,7 @@ namespace TenderAI.Api.Services
         {
             public string? TenderId { get; set; }
             public string? Reason { get; set; }
+            public int? MatchScore { get; set; }
         }
     }
 }

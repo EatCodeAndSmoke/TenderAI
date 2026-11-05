@@ -18,6 +18,7 @@ namespace TenderAI.Api.Services
         private const int MaxConcurrentCustomerEvaluations = 2;
         public const int DefaultDiscoveryCount = 3;
         public const int MaxDiscoveryCount = 10;
+        public const int MinimumMatchScore = 75;
         private const int DiscoveryBatchSize = 5;
         public const int MaxImportedPerSearch = 50;
         private static readonly TimeSpan DiscoveryTimeLimit = TimeSpan.FromSeconds(10);
@@ -162,7 +163,7 @@ namespace TenderAI.Api.Services
                             if (string.IsNullOrWhiteSpace(tender.Summary) || string.IsNullOrWhiteSpace(tender.EnglishTitle))
                                 throw new TenderMatchEvaluationException("A matching tender could not be summarized. Check the Bedrock configuration.");
                         }
-                        var notification = match is null ? null : CreateNotification(customer, tender, match.Reason, timeProvider.GetUtcNow().UtcDateTime);
+                        var notification = match is null ? null : CreateNotification(customer, tender, match.Reason, match.MatchScore, timeProvider.GetUtcNow().UtcDateTime);
                         string? currentFeedback;
                         DateTime? appliedAt;
                         await using (var transaction = await db.Database.BeginTransactionAsync(ct))
@@ -278,6 +279,7 @@ namespace TenderAI.Api.Services
                         evaluation.Customer,
                         tendersById[match.TenderId],
                         match.Reason,
+                        match.MatchScore,
                         timestamp))
                     .ToList();
 
@@ -406,6 +408,7 @@ namespace TenderAI.Api.Services
                 if (!knownTenderIds.Contains(match.TenderId)
                     || !ids.Add(match.TenderId)
                     || string.IsNullOrWhiteSpace(match.Reason)
+                    || match.MatchScore is < 1 or > 100
                     || match.Reason.Length > TenderMatchPrompt.MaximumReasonCharacters
                     || match.Reason.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length > TenderMatchPrompt.MaximumReasonWords)
                 {
@@ -413,13 +416,14 @@ namespace TenderAI.Api.Services
                 }
             }
 
-            return matches;
+            return matches.Where(match => match.MatchScore >= MinimumMatchScore).ToList();
         }
 
         private NotificationEntity CreateNotification(
             CustomerEntity customer,
             TenderEntity tender,
             string matchReason,
+            int matchScore,
             DateTime timestamp)
         {
             var (offer, loanReason) = GetLoanDecision(customer, tender);
@@ -440,6 +444,7 @@ namespace TenderAI.Api.Services
                 PaymentTermsDays = tender.PaymentTermDays ?? 0,
                 Requirements = GetRequirements(tender),
                 MatchReason = matchReason,
+                MatchScore = matchScore,
                 LoanDecisionReason = loanReason,
                 WhyText = matchReason,
                 Offer = offer

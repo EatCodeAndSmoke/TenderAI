@@ -13,16 +13,17 @@ export function updateTenderProgress(previous, event) {
 }
 
 export function tenderProgressMessage(progress, failed) {
-  if (failed) return 'Search stopped. Your saved tenders are still available.';
+  if (failed) return 'We couldn’t finish this search. Your saved opportunities are still here.';
   if (progress.completed) {
-    if (progress.limited) return 'Search paused after the import limit. Search again to check more tenders.';
-    if (progress.timeLimited) return 'Search paused after finding a match. Search again to check more tenders.';
-    return 'Search complete.';
+    if (progress.limited) return 'We’ve checked the maximum for this search. Search again to explore more.';
+    if (progress.timeLimited) return 'We’ve found an opportunity for you. Search again to explore more.';
+    if (progress.found === 0) return 'No new matches this time. Try again later for new opportunities.';
+    return 'Your search is complete. Take a look at your new opportunities below.';
   }
   return {
-    starting: 'Preparing your search…',
-    loading: 'Loading opportunities from UZEX…',
-    matching: 'Comparing tenders with your business…',
-    summarizing: 'Preparing a matching tender…'
-  }[progress.phase] ?? 'Searching for opportunities…';
+    starting: 'Getting your search ready…',
+    loading: 'Discovering opportunities on UZEX…',
+    matching: 'Finding opportunities that fit your business…',
+    summarizing: 'Putting the details together for you…'
+  }[progress.phase] ?? 'Looking for your next opportunity…';
 }

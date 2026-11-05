@@ -19,7 +19,8 @@ namespace TenderAI.Api.Contracts
         string LoanDecisionReason,
         LoanOfferDto? Offer,
         string? Feedback = null,
-        DateTime? AppliedAt = null);
+        DateTime? AppliedAt = null,
+        int? MatchScore = null);
 
     public record LoanOfferDto(long Financing, long Guarantee, long PreApprovedLimit);
 
@@ -33,5 +34,6 @@ namespace TenderAI.Api.Contracts
         string MatchReason,
         string LoanDecisionReason,
         LoanOfferDto? Offer,
-        DateTime CreatedAt);
+        DateTime CreatedAt,
+        int? MatchScore = null);
 }

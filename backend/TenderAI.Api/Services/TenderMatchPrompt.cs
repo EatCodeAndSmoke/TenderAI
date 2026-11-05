@@ -55,11 +55,17 @@ namespace TenderAI.Api.Services
             incoming payment; if it is not English, immediately give its English translation in parentheses.
             Explain in detail in 3 to 5 clear English sentences what the buyer needs, what the customer's
             activity covers, how the quoted payment shows relevant sales, and why those are the same specific
-            category. Mention relevant tender specifics only when supplied, and note an important limitation if
+            category. Speak directly to the business as "you" and "your business" in warm, straightforward
+            language. Avoid technical or evaluative phrases such as "OKED code", "incoming payment evidence",
+            "direct category match", or "the customer". Mention relevant tender specifics only when supplied, and note an important limitation if
             the available information identifies one. Do not claim that the customer meets all requirements,
             can supply every item in a mixed lot, or satisfies unprovided technical specifications. Do not invent
             qualifications, capabilities or facts to make an explanation longer. Avoid generic claims and templates.
             Keep each reason within 120 words and 1200 characters.
+            Add an integer "matchScore" from 1 to 100 estimating the fit based on the specificity and strength
+            of the actual activity and sales evidence. Return only matches scored 75 or higher: 85-100 is
+            "Best match" and 75-84 is "Might interest you". Omit tenders scored below 75. This is a relative
+            AI estimate, not a calibrated probability. Never include a non-match merely to give it a score.
             Return an empty array when nothing qualifies. Return JSON only.
             """;
 
@@ -91,6 +97,12 @@ namespace TenderAI.Api.Services
             only when supported by the supplied evidence; never invent facts, experience, or qualifications.
             Do not claim the customer meets all tender requirements or can supply every item in a mixed lot
             unless the supplied evidence supports it. Do not assume unprovided technical specifications are met.
+            Write the reason directly to the business in friendly, clear English, not as an internal assessment;
+            avoid technical terms like "OKED code", "incoming payment evidence" and "direct category match".
+            Each match must also have an integer "matchScore" from 1 to 100 estimating evidence-based fit.
+            Return only scores of 75 or higher: 85-100 is "Best match", 75-84 is "Might interest you";
+            omit tenders scored below 75. Scores are relative AI estimates, not measured probabilities.
+            A score does not replace the required direct-category evidence: omit non-matches.
             If earlier guidance calls for a shorter or less detailed explanation, follow this response contract
             instead.
             Do not repeat IDs. Return an empty array when there are no matches.
@@ -155,7 +167,7 @@ namespace TenderAI.Api.Services
 
     public sealed record IncomingPaymentEvidence(DateOnly Date, string PurposeDescription);
 
-    public sealed record TenderCandidateMatch(string TenderId, string Reason);
+    public sealed record TenderCandidateMatch(string TenderId, string Reason, int MatchScore);
 
     public interface ITenderMatchEvaluator
     {

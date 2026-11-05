@@ -54,6 +54,7 @@ namespace TenderAI.Api.Data
                 AddColumnIfMissing(db, connection, "Notifications", "CurrencyCode");
                 AddColumnIfMissing(db, connection, "Notifications", "SourceUrl");
                 AddColumnIfMissing(db, connection, "Notifications", "MatchReason");
+                AddColumnIfMissing(db, connection, "Notifications", "MatchScore");
                 AddColumnIfMissing(db, connection, "Notifications", "LoanDecisionReason");
                 AddColumnIfMissing(db, connection, "Notifications", "WhyText");
             }
@@ -145,6 +146,7 @@ namespace TenderAI.Api.Data
                     ("Notifications", "CurrencyCode") => "ALTER TABLE \"Notifications\" ADD COLUMN \"CurrencyCode\" TEXT NOT NULL DEFAULT 'UZS'",
                     ("Notifications", "SourceUrl") => "ALTER TABLE \"Notifications\" ADD COLUMN \"SourceUrl\" TEXT NOT NULL DEFAULT ''",
                     ("Notifications", "MatchReason") => "ALTER TABLE \"Notifications\" ADD COLUMN \"MatchReason\" TEXT NOT NULL DEFAULT ''",
+                    ("Notifications", "MatchScore") => "ALTER TABLE \"Notifications\" ADD COLUMN \"MatchScore\" INTEGER NULL",
                     ("Notifications", "LoanDecisionReason") => "ALTER TABLE \"Notifications\" ADD COLUMN \"LoanDecisionReason\" TEXT NOT NULL DEFAULT ''",
                     ("Notifications", "WhyText") => "ALTER TABLE \"Notifications\" ADD COLUMN \"WhyText\" TEXT NOT NULL DEFAULT ''",
                     _ => throw new ArgumentOutOfRangeException(nameof(column), $"Unsupported schema column {table}.{column}.")

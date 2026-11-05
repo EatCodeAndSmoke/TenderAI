@@ -26,11 +26,27 @@
 
 .tender-feature { background: linear-gradient(120deg, #073d71, #078a9f 68%, #65c6ca); }
 .business-card { background: radial-gradient(circle at 85% 20%, #5bc4d7 0, transparent 40%), linear-gradient(125deg, #002c53, #087a9a); min-height: 205px; }
+.tender-search { background: linear-gradient(115deg, #073d71, #087f91 72%, #179fac); }
+.tender-fit-best { background: #d7f4e9; color: #116348; }
+.tender-fit-explore { background: #f0effc; color: #514a8c; }
 
 @media (prefers-reduced-motion: no-preference) {
   .tender-arrival { animation: tender-arrival 450ms ease-out both; }
+  .tender-leaving { animation: tender-exit 300ms ease-in both; pointer-events: none; }
+  .application-dialog[open] { animation: dialog-arrival 280ms ease-out both; }
+  .application-dialog[open]::backdrop { animation: backdrop-arrival 280ms ease-out both; }
+  .search-active { animation: search-pulse 1.8s ease-in-out infinite; }
   @keyframes tender-arrival {
     from { opacity: 0; transform: translateY(-12px); }
     to { opacity: 1; transform: translateY(0); }
   }
+  @keyframes tender-exit {
+    to { opacity: 0; transform: translateX(24px) scale(.98); }
+  }
+  @keyframes dialog-arrival {
+    from { opacity: 0; transform: translateY(16px) scale(.97); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes backdrop-arrival { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes search-pulse { 50% { transform: scale(1.12); opacity: .7; } }
 }
