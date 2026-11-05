@@ -55,15 +55,16 @@ export default function CustomersPage({ onToast }) {
       <div className={`${CARD} mb-6 p-5`}>
         <div className="mt-2 flex flex-wrap gap-3">
           <button type="button" className={`${BTN_PRIMARY} disabled:opacity-50`} disabled={loading || busy || adding} onClick={generate}>{busy ? 'Working…' : 'Generate customer'}</button>
-          <button type="button" className={`${BTN_SECONDARY} disabled:opacity-50`} disabled={loading || busy || adding} aria-expanded={adding} aria-controls="add-customer-form" onClick={() => setAdding(true)}>Add customer</button>
+          <button type="button" className={`${BTN_SECONDARY} disabled:opacity-50`} disabled={loading || busy || adding} aria-haspopup="dialog" onClick={() => setAdding(true)}>Add customer</button>
           <button type="button" className={`${BTN_SECONDARY} disabled:opacity-50`} disabled={loading || busy || adding || !customers.length} onClick={clear}>Delete all</button>
         </div>
         <p className="mt-3 text-xs text-muted">Generated customers use fictional profiles and payment data. Matching depends on available tenders.</p>
       </div>
-      {adding && <CustomerForm defaultCustomerId={nextId} onCancel={() => setAdding(false)} onSaved={saved => {
-        setCustomers(previous => [...previous, saved].sort((a, b) => a.customer.customerId.localeCompare(b.customer.customerId)));
-        setAdding(false);
-        onToast('Customer saved.');
+      {(adding || selected) && <CustomerForm defaultCustomerId={nextId} customerRecord={selected} onCancel={() => { setAdding(false); setSelected(null); }} onSaved={saved => {
+        setCustomers(previous => [...previous.filter(record => record.customer.customerId !== saved.customer.customerId), saved]
+          .sort((a, b) => a.customer.customerId.localeCompare(b.customer.customerId)));
+        setAdding(false); setSelected(null);
+        onToast(selected ? 'Customer updated.' : 'Customer saved.');
       }} />}
       {error && <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error} <button onClick={load} className="underline">Reload list</button></p>}
       <div className={`${CARD} overflow-x-auto`}>
@@ -71,12 +72,11 @@ export default function CustomersPage({ onToast }) {
           <thead className="bg-subtle text-xs text-muted"><tr><th className="p-4">Customer</th><th className="p-4">Activity</th><th className="p-4">Location</th><th className="p-4">Actions</th></tr></thead>
           <tbody>{customers.map(record => {
             const c = record.customer;
-            return <tr key={c.customerId} className="border-t border-line"><td className="p-4"><strong>{c.name}</strong><div className="text-xs text-muted">{c.customerId} · TIN {c.taxCode}</div></td><td className="p-4">{c.industry.name}<div className="text-xs text-muted">OKED {c.industry.industryCode}</div></td><td className="p-4">{c.address.regionName}</td><td className="p-4 whitespace-nowrap"><button className="mr-3 text-brand-700 underline" onClick={() => setSelected(selected === record ? null : record)}>Details</button><button disabled={busy || adding} className="text-red-700 underline disabled:opacity-50" onClick={() => remove(c.customerId)}>Delete</button></td></tr>;
+            return <tr key={c.customerId} className="border-t border-line"><td className="p-4"><strong>{c.name}</strong><div className="text-xs text-muted">{c.customerId} · TIN {c.taxCode}</div></td><td className="p-4">{c.industry.name}<div className="text-xs text-muted">OKED {c.industry.industryCode}</div></td><td className="p-4">{c.address.regionName}</td><td className="p-4 whitespace-nowrap"><button type="button" aria-haspopup="dialog" disabled={busy || adding} className="mr-3 text-brand-700 underline disabled:opacity-50" onClick={() => setSelected(record)}>Details</button><button disabled={busy || adding} className="text-red-700 underline disabled:opacity-50" onClick={() => remove(c.customerId)}>Delete</button></td></tr>;
           })}</tbody>
         </table>
         {!customers.length && <p className="p-6 text-center text-sm text-muted">No customers yet.</p>}
       </div>
-      {selected && <div className={`${CARD} mt-4 p-5`}><h2 className="font-semibold">{selected.customer.name}</h2><pre className="mt-3 overflow-x-auto text-xs">{JSON.stringify(selected, null, 2)}</pre></div>}
     </section>
   );
 }

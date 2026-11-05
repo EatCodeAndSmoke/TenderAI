@@ -28,6 +28,7 @@ async function request(path, options = {}) {
 export const getCustomers = () => request('/customers');
 export const generateCustomer = () => request('/customers/generate', { method: 'POST' });
 export const addCustomer = customer => request('/customers', { method: 'POST', body: JSON.stringify(customer) });
+export const updateCustomer = (customerId, customer) => request(`/customers/${encodeURIComponent(customerId)}`, { method: 'PUT', body: JSON.stringify(customer) });
 export const deleteCustomer = customerId => request(`/customers/${encodeURIComponent(customerId)}`, { method: 'DELETE' });
 export const clearCustomers = () => request('/customers', { method: 'DELETE' });
 export const getTenders = () => request('/tenders?includeExpired=true');
