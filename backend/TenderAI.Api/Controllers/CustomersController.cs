@@ -215,7 +215,9 @@ namespace TenderAI.Api.Controllers
         private async Task<ActionResult<IEnumerable<NotificationDto>>> GetMatchesCore(string customerId, bool includeExpired, CancellationToken ct)
         {
             customerId = NormalizeId(customerId);
-            if (!await db.Customers.AnyAsync(c => c.CustomerId == customerId, ct)) return NotFound();
+            var customer = await db.Customers.AsNoTracking().Include(c => c.RiskFeatures)
+                .SingleOrDefaultAsync(c => c.CustomerId == customerId, ct);
+            if (customer is null) return NotFound();
             var now = DateTime.UtcNow.AddHours(5);
 
             var notifications = await db.Notifications
@@ -258,10 +260,17 @@ namespace TenderAI.Api.Controllers
                     .ThenByDescending(notification => notification.CreatedAt)
                     .ThenByDescending(notification => notification.Id).First())
                 .OrderByDescending(notification => notification.CreatedAt).ThenByDescending(notification => notification.Id)
-                .Select(notification => notification.ToDto(tenders[notification.LotId].EnglishTitle ?? tenders[notification.LotId].Summary) with
+                .Select(notification =>
                 {
-                    Feedback = feedback.GetValueOrDefault(notification.LotId),
-                    AppliedAt = applications.TryGetValue(notification.LotId, out var appliedAt) ? appliedAt : null
+                    var tender = tenders[notification.LotId];
+                    var (offer, reason) = MatchingService.GetCurrentLoanDecision(customer, tender);
+                    return notification.ToDto(tender.EnglishTitle ?? tender.Summary) with
+                    {
+                        LoanDecisionReason = reason,
+                        Offer = offer,
+                        Feedback = feedback.GetValueOrDefault(notification.LotId),
+                        AppliedAt = applications.TryGetValue(notification.LotId, out var appliedAt) ? appliedAt : null
+                    };
                 })
                 .ToList();
         }

@@ -27,9 +27,9 @@ namespace TenderAI.Api.Controllers
                 .ThenBy(notification => notification.CustomerId)
                 .ThenBy(notification => notification.LotId)
                 .ToListAsync(ct);
-            var customerNames = await db.Customers
-                .AsNoTracking()
-                .ToDictionaryAsync(customer => customer.CustomerId, customer => customer.Name, ct);
+            var customers = await db.Customers
+                .AsNoTracking().Include(customer => customer.RiskFeatures)
+                .ToDictionaryAsync(customer => customer.CustomerId, ct);
             var tenderIds = notifications
                 .Select(notification => long.TryParse(notification.LotId, NumberStyles.None, CultureInfo.InvariantCulture, out var id)
                     ? (long?)id
@@ -38,20 +38,25 @@ namespace TenderAI.Api.Controllers
                 .Select(id => id.GetValueOrDefault())
                 .Distinct()
                 .ToList();
-            var tenderSummaries = (await db.Tenders
+            var tenders = (await db.Tenders
                 .AsNoTracking()
                 .Where(tender => tenderIds.Contains(tender.Id))
-                .Select(tender => new { tender.Id, Title = tender.EnglishTitle ?? tender.Summary })
                 .ToListAsync(ct))
                 .ToDictionary(
                     tender => tender.Id.ToString(CultureInfo.InvariantCulture),
-                    tender => tender.Title);
+                    tender => tender);
 
             return notifications
-                .Where(notification => customerNames.ContainsKey(notification.CustomerId))
-                .Select(notification => notification.ToMatchDto(
-                    customerNames[notification.CustomerId],
-                    tenderSummaries.GetValueOrDefault(notification.LotId)))
+                .Where(notification => customers.ContainsKey(notification.CustomerId))
+                .Select(notification =>
+                {
+                    var customer = customers[notification.CustomerId];
+                    var tender = tenders.GetValueOrDefault(notification.LotId);
+                    var match = notification.ToMatchDto(customer.Name, tender?.EnglishTitle ?? tender?.Summary);
+                    if (tender is null) return match;
+                    var (offer, reason) = MatchingService.GetCurrentLoanDecision(customer, tender);
+                    return match with { Offer = offer, LoanDecisionReason = reason };
+                })
                 .ToList();
         }
 
