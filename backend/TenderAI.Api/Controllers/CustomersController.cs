@@ -68,55 +68,9 @@ namespace TenderAI.Api.Controllers
         [HttpPost("generate")]
         public async Task<ActionResult<IEnumerable<CustomerRecordDto>>> Generate(
             [FromServices] CustomerGenerationService generator,
-            CancellationToken ct,
-            [FromQuery] string? scenario = null,
-            [FromServices] TenderImportService? importer = null,
-            [FromServices] MatchingService? matching = null,
-            [FromServices] TenderSummaryService? summaries = null)
+            CancellationToken ct)
         {
-            if (scenario is not null && scenario is not ("offer" or "match" or "none"))
-                return BadRequest("Scenario must be offer, match, or none.");
-            try
-            {
-                if (scenario is not null && importer is not null
-                    && !await db.Tenders.AnyAsync(t => !t.IsDeleted && t.EndDate >= DateTime.UtcNow.AddHours(5), ct))
-                    await importer.LoadNewAsync(TenderImportService.MaxTendersPerLoad, ct);
-                else if (scenario is not null && summaries is not null)
-                    await summaries.SummarizeMissingTendersAsync(db, ct);
-                try
-                {
-                    return Ok(await generator.GenerateAsync(scenario, ct, matching));
-                }
-                catch (NoAvailableTenderSummaryException) when (scenario is not null && importer is not null)
-                {
-                    var now = DateTime.UtcNow.AddHours(5);
-                    if (!await db.Tenders.AnyAsync(t => !t.IsDeleted && t.EndDate >= now && t.Summary != null && t.Summary != ""
-                            && t.EnglishTitle != null && t.EnglishTitle != "", ct)
-                        && await db.Tenders.AnyAsync(t => !t.IsDeleted && t.EndDate >= now && t.SummaryError != null, ct))
-                        throw;
-                    await importer.LoadNewAsync(TenderImportService.MaxTendersPerLoad, ct);
-                    return Ok(await generator.GenerateAsync(scenario, ct, matching));
-                }
-            }
-            catch (NoAvailableTenderSummaryException ex)
-            {
-                var now = DateTime.UtcNow.AddHours(5);
-                if (!await db.Tenders.AnyAsync(t => !t.IsDeleted && t.EndDate >= now && t.Summary != null && t.Summary != ""
-                        && (scenario == null || (t.EnglishTitle != null && t.EnglishTitle != "")), ct)
-                    && await db.Tenders.AnyAsync(t => !t.IsDeleted && t.EndDate >= now && t.SummaryError != null, ct))
-                    return Problem(statusCode: StatusCodes.Status502BadGateway,
-                        title: "Tender summaries are unavailable. Check the Amazon Bedrock configuration and try again.");
-                return Problem(statusCode: StatusCodes.Status400BadRequest, title: ex.Message);
-            }
-            catch (CustomerProfileGenerationException ex)
-            {
-                return Problem(statusCode: StatusCodes.Status502BadGateway, title: ex.Message);
-            }
-            catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException
-                || (ex is TaskCanceledException && !ct.IsCancellationRequested))
-            {
-                return Problem(statusCode: StatusCodes.Status502BadGateway, title: "Couldn't load tenders from UZEX.", detail: ex.Message);
-            }
+            return Ok(await generator.GenerateAsync(ct));
         }
 
         [HttpGet("{customerId}/accounts")]

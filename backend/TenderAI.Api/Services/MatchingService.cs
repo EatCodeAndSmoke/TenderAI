@@ -16,6 +16,7 @@ namespace TenderAI.Api.Services
     {
         private static readonly TimeSpan TashkentOffset = TimeSpan.FromHours(5);
         private const int MaxConcurrentCustomerEvaluations = 2;
+        public const int DefaultDiscoveryCount = 3;
         public const int MaxDiscoveryCount = 10;
         private const int DiscoveryBatchSize = 5;
         public const int MaxImportedPerSearch = 50;
@@ -110,28 +111,6 @@ namespace TenderAI.Api.Services
                 yield return new TenderDiscoveryEvent("completed", matchedCount, Imported: importedCount, Limited: limited);
             }
             finally { DiscoveryLock.Release(); }
-        }
-
-        public async Task<bool> VerifyScenarioAsync(CustomerEntity customer, string scenario, CancellationToken ct)
-        {
-            var now = timeProvider.GetUtcNow().ToOffset(TashkentOffset).DateTime;
-            var today = DateOnly.FromDateTime(now);
-            var tenders = await db.Tenders.AsNoTracking().Include(t => t.Products)
-                .Where(t => !t.IsDeleted && t.EndDate >= now).ToListAsync(ct);
-            using var semaphore = new SemaphoreSlim(1);
-            var evaluation = await EvaluateCustomerAsync(
-                customer, tenders.Select(ToTenderEvidence).ToList(), today.AddMonths(-12), today, semaphore, ct);
-            if (evaluation.Error is not null)
-                throw new CustomerProfileGenerationException("Could not verify the customer scenario with the matching service. No customer was saved.", evaluation.Error);
-            var matches = evaluation.Matches!;
-            var byId = tenders.ToDictionary(t => t.Id.ToString(CultureInfo.InvariantCulture), StringComparer.Ordinal);
-            return scenario switch
-            {
-                "none" => matches.Count == 0,
-                "match" => matches.Count > 0 && matches.All(m => GetLoanDecision(customer, byId[m.TenderId]).Offer is null),
-                "offer" => matches.Any(m => GetLoanDecision(customer, byId[m.TenderId]).Offer is not null),
-                _ => throw new ArgumentException("Unknown customer scenario.", nameof(scenario))
-            };
         }
 
         public async IAsyncEnumerable<MatchRunEvent> RunStreamingAsync(

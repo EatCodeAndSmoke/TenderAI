@@ -1,5 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
+using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -16,6 +19,50 @@ namespace TenderAI.Api.Tests;
 
 public class TenderDiscoveryTests
 {
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(1, 1)]
+    [InlineData(2, 2)]
+    [InlineData(3, 3)]
+    [InlineData(5, 3)]
+    public async Task DiscoveryEndpointDefaultsToThreeMatchesOrFewerWhenUnavailable(int available, int expected)
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options;
+        await using var db = new TenderAiDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        db.Tenders.AddRange(Enumerable.Range(1, available).Select(Tender));
+        await db.SaveChangesAsync();
+        using var http = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
+        await using var body = new MemoryStream();
+        var context = new DefaultHttpContext();
+        context.Response.Body = body;
+        var controller = new MatchesController(db, Matcher(db), NullLogger<MatchesController>.Instance)
+        {
+            ControllerContext = new ControllerContext { HttpContext = context }
+        };
+
+        await controller.Discover("C-1", null, Importer(db, http), CancellationToken.None);
+        body.Position = 0;
+        var payload = await new StreamReader(body, Encoding.UTF8).ReadToEndAsync();
+        var events = payload.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Where(line => line.StartsWith("data: ", StringComparison.Ordinal))
+            .Select(line => JsonDocument.Parse(line["data: ".Length..]))
+            .ToList();
+        try
+        {
+            Assert.Equal(expected, events.Count(eventJson => eventJson.RootElement.GetProperty("type").GetString() == "match"));
+            var completed = Assert.Single(events, eventJson => eventJson.RootElement.GetProperty("type").GetString() == "completed");
+            Assert.Equal(expected, completed.RootElement.GetProperty("count").GetInt32());
+        }
+        finally
+        {
+            events.ForEach(eventJson => eventJson.Dispose());
+        }
+    }
+
     [Fact]
     public async Task DiscoveryStreamsStoredMatchesUpToRequestedCountAndPersistsFeedback()
     {
@@ -48,6 +95,33 @@ public class TenderDiscoveryTests
         Assert.Equal("2", Assert.Single(loaded.Value!).LotId);
         Assert.Equal("like", Assert.Single(loaded.Value!).Feedback);
         Assert.Equal(0, await db.TenderFeedback.CountAsync(f => f.CustomerId == "C-2"));
+    }
+
+    [Fact]
+    public async Task DefaultDiscoveryImportsUntilThreeMatchesAreFound()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options;
+        await using var db = new TenderAiDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        db.Tenders.Add(Tender(1));
+        await db.SaveChangesAsync();
+        var handler = new UzexHandler(4);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://uzex.test/") };
+        await using var body = new MemoryStream();
+        var context = new DefaultHttpContext();
+        context.Response.Body = body;
+        var controller = new MatchesController(db, Matcher(db), NullLogger<MatchesController>.Instance)
+        {
+            ControllerContext = new ControllerContext { HttpContext = context }
+        };
+        await controller.Discover("C-1", null, Importer(db, http), CancellationToken.None);
+        body.Position = 0;
+        var payload = await new StreamReader(body, Encoding.UTF8).ReadToEndAsync();
+        Assert.Equal(3, payload.Split("\"type\":\"match\"", StringSplitOptions.None).Length - 1);
+        Assert.True(handler.ListCalls > 0);
     }
 
     [Fact]
@@ -214,6 +288,39 @@ public class TenderDiscoveryTests
         using var http = new HttpClient(handler) { BaseAddress = new Uri("https://uzex.test/") };
         var imported = await Importer(db, http).LoadNewAsync(1, CancellationToken.None);
         Assert.Equal(2, Assert.Single(imported).Id);
+    }
+
+    [Fact]
+    public async Task ClearPermanentlyDeletesTendersAndRelatedRecordsAndAllowsReimport()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options;
+        await using var db = new TenderAiDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        var active = Tender(1);
+        active.Products.Add(new TenderProductEntity { ProductName = "Bread", OrderNum = 1 });
+        var deleted = Tender(2);
+        deleted.IsDeleted = true;
+        db.Tenders.AddRange(active, deleted);
+        db.TenderFeedback.Add(new TenderFeedbackEntity { CustomerId = "C-1", TenderId = 1, Value = "like" });
+        db.TenderApplications.Add(new TenderApplicationEntity { CustomerId = "C-1", TenderId = 1, AppliedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        using var emptyHttp = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
+        await foreach (var _ in Matcher(db).DiscoverAsync("C-1", 1, Importer(db, emptyHttp), CancellationToken.None)) { }
+        Assert.Single(await db.Notifications.ToListAsync());
+        Assert.IsType<NoContentResult>(await new TendersController(db).Clear(CancellationToken.None));
+
+        db.ChangeTracker.Clear();
+        Assert.Empty(await db.Tenders.ToListAsync());
+        Assert.Empty(await db.TenderProducts.ToListAsync());
+        Assert.Empty(await db.TenderFeedback.ToListAsync());
+        Assert.Empty(await db.TenderApplications.ToListAsync());
+        Assert.Empty(await db.Notifications.ToListAsync());
+        Assert.Single(await db.Customers.ToListAsync());
+        using var http = new HttpClient(new UzexHandler(2)) { BaseAddress = new Uri("https://uzex.test/") };
+        Assert.Equal(new long[] { 1, 2 }, (await Importer(db, http).LoadNewAsync(2, CancellationToken.None)).Select(t => t.Id));
     }
 
     [Fact]

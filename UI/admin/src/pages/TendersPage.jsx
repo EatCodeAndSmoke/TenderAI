@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { deleteTender, getTenders } from '../lib/api.js';
-import { CARD } from '../lib/styles.js';
+import { clearTenders, deleteTender, getTenders } from '../lib/api.js';
+import { BTN_SECONDARY, CARD } from '../lib/styles.js';
 import PageHeader from '../components/PageHeader.jsx';
 
 export default function TendersPage({ onToast }) {
@@ -25,8 +25,20 @@ export default function TendersPage({ onToast }) {
     } catch (err) { setError(err.message); }
     finally { setBusy(null); }
   }
+  async function clear() {
+    if (!window.confirm('Permanently clear all tenders, including deleted tenders, and their matches, feedback and applications? Tenders can be imported again.')) return;
+    setBusy('all'); setError('');
+    try {
+      await clearTenders();
+      setTenders([]);
+      onToast('All tenders cleared.');
+    } catch (err) { setError(err.message); }
+    finally { setBusy(null); }
+  }
   return <section>
-    <PageHeader title="Tenders" summary="Manage stored UZEX tenders. Deleted tenders are hidden for all customers and will not be imported again." />
+    <PageHeader title="Tenders" summary="Manage stored UZEX tenders. Deleting one tender hides it from future imports; clearing all allows reimport."
+      actions={<button type="button" onClick={clear} disabled={loading || busy !== null}
+        className={`${BTN_SECONDARY} disabled:opacity-50`}>{busy === 'all' ? 'Clearing…' : 'Clear all tenders'}</button>} />
     {error && <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error} <button onClick={load} className="underline">Reload</button></p>}
     <div className={CARD}>
       {loading ? <p className="p-5 text-sm text-muted">Loading tenders…</p> : !tenders.length ? <p className="p-5 text-sm text-muted">No tenders stored.</p> :
