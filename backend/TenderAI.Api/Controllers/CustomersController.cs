@@ -311,14 +311,22 @@ namespace TenderAI.Api.Controllers
 
             var application = await db.TenderApplications.AsNoTracking()
                 .SingleOrDefaultAsync(a => a.CustomerId == customerId && a.TenderId == tenderId, ct);
-            if (application is not null) return ToApplicationDto(application);
+            if (application is not null)
+            {
+                var customer = await db.Customers.AsNoTracking().Include(c => c.RiskFeatures)
+                    .SingleOrDefaultAsync(c => c.CustomerId == customerId, ct);
+                var tender = await db.Tenders.AsNoTracking()
+                    .SingleOrDefaultAsync(t => t.Id == tenderId && !t.IsDeleted, ct);
+                if (customer is null || tender is null) return NotFound();
+                var (offer, reason) = tender.EndDate >= DateTime.UtcNow.AddHours(5)
+                    ? MatchingService.GetCurrentLoanDecision(customer, tender)
+                    : (null, "This tender is closed, so a loan application is not suggested.");
+                return new TenderApplicationDto("applied", DateTime.SpecifyKind(application.AppliedAt, DateTimeKind.Utc), offer, reason);
+            }
             if (!await db.Customers.AnyAsync(c => c.CustomerId == customerId, ct)
                 || !await db.Tenders.AnyAsync(t => t.Id == tenderId && !t.IsDeleted, ct)) return NotFound();
             return Conflict(new ProblemDetails { Title = "Only an open, matching tender can be marked for preparation." });
         }
-
-        private static TenderApplicationDto ToApplicationDto(TenderApplicationEntity application) =>
-            new("applied", DateTime.SpecifyKind(application.AppliedAt, DateTimeKind.Utc));
 
         private Task<CustomerEntity?> FindAsync(string customerId, CancellationToken ct, bool tracking)
         {
@@ -336,6 +344,6 @@ namespace TenderAI.Api.Controllers
     }
 
     public record TenderFeedbackRequest(string Value);
-    public record TenderApplicationDto(string Status, DateTime AppliedAt);
+    public record TenderApplicationDto(string Status, DateTime AppliedAt, LoanOfferDto? Offer, string LoanDecisionReason);
     public record SavedTenderDiscovery(TenderDto Tender, NotificationDto Match, bool IsOpen);
 }

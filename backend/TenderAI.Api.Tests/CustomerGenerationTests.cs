@@ -42,7 +42,7 @@ public class CustomerGenerationTests
         Assert.Equal(new[] { "EUR", "GEL", "USD" }, saved.Accounts.Select(a => a.Currency).Order().ToArray());
         Assert.Single(saved.Accounts.Select(a => a.Iban).Distinct());
         Assert.NotNull(saved.RiskFeatures);
-        Assert.NotNull(saved.RiskFeatures.PreApprovedLimit);
+        Assert.InRange(saved.RiskFeatures.PreApprovedLimit!.Value, 2_000_000_000L, 60_000_000_000L);
     }
 
     [Fact]
@@ -65,7 +65,7 @@ public class CustomerGenerationTests
             Assert.Equal(20, customers.Select(c => c.CustomerId).Distinct(StringComparer.OrdinalIgnoreCase).Count());
             Assert.Equal(20, customers.Select(c => c.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count());
             Assert.Equal(20, customers.Select(c => c.TaxCode).Distinct().Count());
-            Assert.Equal(20, customers.Select(c => c.Industry!.IndustryCode).Distinct().Count());
+            Assert.Equal(18, customers.Select(c => c.Industry!.IndustryCode).Distinct().Count());
             Assert.DoesNotContain(customers, customer => customer.CustomerId == "C-01" || customer.TaxCode == "300000001");
             Assert.Equal(60, await setup.CustomerAccounts.CountAsync());
         }
@@ -85,13 +85,60 @@ public class CustomerGenerationTests
         await db.Database.EnsureCreatedAsync();
         var generator = new CustomerGenerationService(db);
         var generated = new List<CustomerRecordDto>();
-        for (var i = 0; i < 33; i++)
+        for (var i = 0; i < 36; i++)
             generated.Add(Assert.Single(await generator.GenerateAsync(CancellationToken.None)));
 
         var codes = generated.Select(record => record.Customer!.Industry!.IndustryCode).ToArray();
-        Assert.Equal(32, codes.Take(32).Distinct().Count());
-        Assert.True(codes.Select(code => code[..2]).Distinct().Count() >= 10);
-        Assert.All(generated, record => Assert.Equal(2, record.RecentPayments.Count(payment => payment.IsIncoming)));
+        Assert.Equal(18, codes.Take(18).Distinct().Count());
+        Assert.Equal(18, codes.Skip(18).Distinct().Count());
+        Assert.All(generated, record =>
+        {
+            var incoming = record.RecentPayments.Where(payment => payment.IsIncoming).ToArray();
+            Assert.Equal(2, incoming.Length);
+            Assert.Single(record.RecentPayments, payment => !payment.IsIncoming);
+            Assert.InRange(record.RiskFeatures!.PreApprovedLimit!.Value, 2_000_000_000L, 60_000_000_000L);
+            Assert.Contains(CustomerGenerationService.Profiles, profile =>
+                profile.Code == record.Customer!.Industry!.IndustryCode
+                && profile.Name == record.Customer.Industry.Name
+                && incoming.Any(payment => payment.PurposeDescription.Contains(profile.FirstSale, StringComparison.Ordinal))
+                && incoming.Any(payment => payment.PurposeDescription.Contains(profile.SecondSale, StringComparison.Ordinal)));
+        });
+    }
+
+    [Fact]
+    public void ProfileCatalogCoversTenderSpecificSalesAndWeatherEvidence()
+    {
+        var profiles = CustomerGenerationService.Profiles;
+        var expectedSales = new[]
+        {
+            "straight-run gasoil", "gas condensate", "methyl tert-butyl ether", "monomethylaniline",
+            "college building reconstruction", "school facade", "office building renovation",
+            "hydroelectric power plant construction", "transmission line", "road reconstruction feasibility",
+            "hydroelectric power plant project management", "housing project finance", "escrow",
+            "air conditioners", "refrigerator", "water cooler", "school kitchen",
+            "immunoglobulin", "carboplatin", "dexpanthenol", "mupirocin", "neonatal screening",
+            "PCR diagnostic", "hepatitis", "tuberculosis diagnostic", "automatic weather stations",
+            "solar radiation", "voltage measurement", "time and frequency", "radiofrequency",
+            "audiometry", "connection duration", "gastroendoscope", "videocolonoscope",
+            "bronchoscope", "hysteroscope", "arthroscope", "laparoscope", "electrocardiogram",
+            "blood collection", "donor blood processing", "shredder", "press-compactor",
+            "gas turbine engine", "bank deposit machines", "monoblock", "laptop", "video conference",
+            "mobile crane", "multilift", "school student desks", "school bookcases",
+            "financial management information system", "video surveillance", "drought-resistant garden",
+            "gas generator maintenance"
+        };
+        foreach (var expected in expectedSales)
+            Assert.Contains(profiles, profile =>
+                profile.FirstSale.Contains(expected, StringComparison.OrdinalIgnoreCase)
+                || profile.SecondSale.Contains(expected, StringComparison.OrdinalIgnoreCase));
+
+        var weather = Assert.Single(profiles, profile => profile.FirstSale.Contains("automatic weather stations", StringComparison.Ordinal));
+        Assert.Equal("46690", weather.Code);
+        Assert.Contains("meteorological", weather.Name);
+        Assert.Contains("weather", weather.SecondSale);
+        Assert.DoesNotContain(profiles.Where(profile => profile.Code == "46510"),
+            profile => profile.FirstSale.Contains("weather", StringComparison.OrdinalIgnoreCase)
+                || profile.SecondSale.Contains("weather", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

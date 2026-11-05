@@ -12,7 +12,7 @@ export default function LoanPage() {
 
   const n = matches.find((x) => x.lotId === lotId);
   if (matchesLoading) return <p>Loading loan details…</p>;
-  if (matchesError) return <p role="alert">{matchesError}</p>;
+  if (matchesError && !n) return <p role="alert">{matchesError}</p>;
   if (!n || !n.offer || (n.offer.financing <= 0 && n.offer.guarantee <= 0)) {
     return <Navigate to="/tenders" replace />;
   }

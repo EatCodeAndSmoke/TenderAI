@@ -18,40 +18,42 @@ namespace TenderAI.Api.Services
         ];
         private static readonly string[] Districts = ["Yunusobod", "Chilonzor", "Mirzo Ulugbek", "Sergeli", "Yakkasaray"];
         private static readonly string[] Languages = ["en", "ru", "uz"];
-        private static readonly BusinessProfile[] Profiles =
+        internal static IReadOnlyList<BusinessProfile> Profiles { get; } =
         [
-            new("10710", "Manufacture of bread", "fresh bread delivery", "bakery products", "flour and baking supplies"),
-            new("46390", "Wholesale of food products", "food products delivery", "rice and groceries", "food stock"),
-            new("46499", "Wholesale of paper and stationery", "office stationery supply", "paper products", "stationery stock"),
-            new("81210", "General cleaning of buildings", "office cleaning services", "building cleaning services", "cleaning materials"),
-            new("41000", "Building construction and repair", "building repair work", "construction services", "construction materials"),
-            new("46460", "Wholesale of pharmaceutical goods", "pharmaceutical supplies", "medical products", "medical stock"),
-            new("46510", "Wholesale of computers and peripheral equipment", "computer equipment supply", "laptops and accessories", "computer stock"),
-            new("62010", "Computer programming activities", "software development services", "software maintenance", "software licenses"),
-            new("46690", "Wholesale of machinery and equipment", "laboratory equipment supply", "machinery and equipment", "equipment stock"),
-            new("46470", "Wholesale of furniture and lighting equipment", "office furniture supply", "lighting equipment", "furniture stock"),
-            new("01110", "Growing of cereals and legumes", "wheat and grain supply", "dried legumes", "seeds and fertilizer"),
-            new("01210", "Growing of grapes", "fresh grape supply", "table grapes", "vineyard supplies"),
-            new("01410", "Raising of dairy cattle", "fresh milk supply", "dairy cattle products", "animal feed"),
-            new("01610", "Support activities for crop production", "crop harvesting services", "field preparation services", "agricultural supplies"),
-            new("14130", "Manufacture of outerwear", "workwear production", "uniform supply", "fabric and thread"),
-            new("18120", "Printing services", "brochure printing", "printed forms and labels", "paper and ink"),
-            new("22220", "Manufacture of plastic packing goods", "plastic packaging supply", "packaging containers", "plastic materials"),
-            new("25110", "Manufacture of metal structures", "metal structure fabrication", "steel frames and components", "steel and fasteners"),
-            new("31010", "Manufacture of office furniture", "office desk production", "office cabinets", "timber and fittings"),
-            new("43210", "Electrical installation", "electrical installation work", "building wiring services", "electrical cables"),
-            new("43220", "Plumbing and heating installation", "plumbing installation work", "heating system repairs", "pipes and fittings"),
-            new("43320", "Joinery installation", "door and window installation", "interior joinery work", "doors and hardware"),
-            new("49390", "Other passenger land transport", "staff transportation services", "passenger bus hire", "vehicle fuel"),
-            new("49410", "Freight transport by road", "road freight delivery", "cargo transportation", "vehicle fuel"),
-            new("52100", "Warehousing and storage", "warehouse storage services", "inventory handling services", "warehouse supplies"),
-            new("56100", "Restaurants and mobile food service", "meal catering services", "prepared meals", "food ingredients"),
-            new("71120", "Engineering activities and technical consultancy", "engineering design services", "technical consultancy", "engineering software"),
-            new("73110", "Advertising agencies", "advertising campaign services", "marketing materials", "advertising supplies"),
-            new("77320", "Renting of construction machinery", "construction equipment rental", "excavator rental", "machinery maintenance"),
-            new("80100", "Private security activities", "building security services", "security patrol services", "security equipment"),
-            new("81300", "Landscape service activities", "landscaping services", "garden maintenance", "plants and gardening supplies"),
-            new("86210", "General medical practice", "medical consultation services", "health examination services", "medical supplies")
+            new("46710", "Wholesale of fuels and petroleum products for refineries", "straight-run gasoil supply for refinery processing", "crude oil and gas condensate supply", "petroleum stock"),
+            new("46750", "Wholesale of chemical fuel additives", "methyl tert-butyl ether (MTBE) supply", "monomethylaniline (MMA) fuel additive supply", "industrial chemical stock"),
+            new("41000", "Building construction and repair", "college building reconstruction work", "school facade and roof renovation", "construction materials"),
+            new("41000", "Building construction and repair", "office building renovation work", "building facade repair and window replacement", "construction materials"),
+            new("42990", "Construction of civil engineering projects", "hydroelectric power plant construction", "dam and spillway construction", "construction materials"),
+            new("42220", "Construction of power and telecommunications lines", "high-voltage transmission line construction", "electric power line construction work", "power line cables and supports"),
+            new("71120", "Engineering consultancy for road projects", "road reconstruction feasibility study", "highway technical-economic feasibility assessment", "engineering software"),
+            new("71120", "Engineering consultancy and project management for hydropower", "hydroelectric power plant project management", "hydropower construction engineering consultancy", "engineering software"),
+            new("70220", "Business and management consultancy", "housing project finance advisory services", "escrow account implementation consultancy", "business research"),
+            new("46439", "Wholesale of household electrical goods", "air conditioners and refrigerator supply", "electric stoves and water cooler supply", "household appliance stock"),
+            new("46460", "Wholesale of medicines including immunoglobulin and oncology drugs", "immunoglobulin medicine supply", "carboplatin infusion medicine supply", "pharmaceutical stock"),
+            new("46460", "Wholesale of pharmaceutical creams and ointments", "dexpanthenol cream and ointment supply", "mupirocin ointment supply", "pharmaceutical stock"),
+            new("46460", "Wholesale of diagnostic screening and PCR reagents", "neonatal screening reagent kits supply", "PCR diagnostic reagents and test kits supply", "diagnostic reagent stock"),
+            new("46460", "Wholesale of diagnostic tests and allergens", "hepatitis, syphilis and HIV diagnostic test kits supply", "tuberculosis diagnostic allergen supply", "medical test stock"),
+            new("46690", "Wholesale and installation of automatic weather stations and meteorological equipment", "automatic weather stations supply and installation", "weather monitoring stations and sensors supply and installation", "meteorological equipment stock"),
+            new("46690", "Wholesale of radiation and electrical metrology equipment", "solar radiation measurement standard supply", "voltage measurement standard supply", "metrology instrument stock"),
+            new("46690", "Wholesale of frequency and radiofrequency metrology equipment", "time and frequency standards supply", "radiofrequency sensor calibration system supply", "metrology instrument stock"),
+            new("46690", "Wholesale of measurement and audiometry standards", "audiometry measurement standard supply", "connection duration measurement system supply", "metrology instrument stock"),
+            new("46690", "Wholesale of medical endoscopy equipment", "gastroendoscope and videocolonoscope supply", "bronchoscope and medical videoendoscope supply", "medical equipment stock"),
+            new("46690", "Wholesale of medical endoscopy equipment", "hysteroscope and arthroscope supply", "laparoscope and videoendoscopy equipment supply", "medical equipment stock"),
+            new("46690", "Wholesale of cardiac monitoring and ECG equipment", "electrocardiogram (ECG) hospital equipment supply", "cardiac monitoring equipment supply", "medical equipment stock"),
+            new("46690", "Wholesale of blood collection and donor processing equipment", "blood collection and storage containers supply", "donor blood processing kits supply", "medical consumables stock"),
+            new("46690", "Wholesale of industrial waste processing machinery", "industrial metal waste shredder line supply", "industrial waste press-compactor equipment supply", "industrial machinery stock"),
+            new("46690", "Wholesale of industrial gas turbine engines", "gas turbine engine supply", "industrial gas turbine equipment supply", "turbine equipment stock"),
+            new("46690", "Wholesale of automated bank deposit machines", "automated bank deposit machines supply", "cash deposit machine supply", "banking equipment stock"),
+            new("46690", "Wholesale of commercial kitchen equipment", "commercial kitchen equipment supply", "school kitchen food distribution equipment supply", "commercial kitchen equipment stock"),
+            new("46510", "Wholesale of computers and peripheral equipment", "monoblock computer supply", "laptop computer supply", "computer stock"),
+            new("46520", "Wholesale of electronic and telecommunications equipment", "video conference equipment and webcam supply", "video conferencing cameras supply", "telecommunications equipment stock"),
+            new("45190", "Sale of other motor vehicles", "25-ton mobile crane vehicle supply", "airport aircraft de-icing multilift vehicle supply", "commercial vehicle stock"),
+            new("31010", "Manufacture of office and shop furniture", "school student desks and chairs production", "school bookcases and office desks production", "timber and furniture fittings"),
+            new("62010", "Computer programming activities", "financial management information system development", "customs finance management software development", "software licenses"),
+            new("80200", "Security systems service activities", "AI video surveillance system installation", "video surveillance monitoring system installation", "security cameras"),
+            new("81300", "Landscape service activities", "drought-resistant garden landscaping", "dryland garden establishment services", "plants and gardening supplies"),
+            new("33120", "Repair of machinery and equipment", "industrial gas generator maintenance services", "gas turbine generator repair and maintenance", "generator spare parts")
         ];
 
         public async Task<IReadOnlyList<CustomerRecordDto>> GenerateAsync(CancellationToken ct)
@@ -91,7 +93,10 @@ namespace TenderAI.Api.Services
                 var profileCounts = existing.GroupBy(customer => customer.IndustryCode, StringComparer.OrdinalIgnoreCase)
                     .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
                 var minimumCount = Profiles.Min(candidate => profileCounts.GetValueOrDefault(candidate.Code));
-                var profile = Pick(Profiles.Where(candidate => profileCounts.GetValueOrDefault(candidate.Code) == minimumCount).ToArray());
+                var eligibleCodes = Profiles.Where(candidate => profileCounts.GetValueOrDefault(candidate.Code) == minimumCount)
+                    .Select(candidate => candidate.Code).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                var code = Pick(eligibleCodes);
+                var profile = Pick(Profiles.Where(candidate => candidate.Code == code).ToArray());
                 var overdue = Random.Shared.Next(3) == 0;
                 var customer = new CustomerEntity
                 {
@@ -113,7 +118,7 @@ namespace TenderAI.Api.Services
                         OutstandingAmount = 0,
                         OverdueAmount = overdue ? 1_000_000 : 0,
                         MaxOverdueDays12m = overdue ? 45 : 0,
-                        PreApprovedLimit = Random.Shared.Next(100, 301) * 1_000_000L,
+                        PreApprovedLimit = Random.Shared.Next(2, 61) * 1_000_000_000L,
                         KycPassed = true
                     },
                     Payments =
@@ -145,6 +150,6 @@ namespace TenderAI.Api.Services
 
         private static T Pick<T>(IReadOnlyList<T> values) => values[Random.Shared.Next(values.Count)];
 
-        private sealed record BusinessProfile(string Code, string Name, string FirstSale, string SecondSale, string Purchase);
+        internal sealed record BusinessProfile(string Code, string Name, string FirstSale, string SecondSale, string Purchase);
     }
 }
