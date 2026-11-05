@@ -24,7 +24,7 @@ export default function TenderApplicationDialog({ tender, match, onClose }) {
       <h2 id="application-title" className="mt-1 text-xl font-semibold">Your request is saved</h2>
       <p id="application-description" className="mt-3 text-sm leading-relaxed text-ink/80">
         Your request for <strong>{tender.englishTitle}</strong> is saved. You can return to this opportunity
-        anytime to review the details.{match.simulationScheduled && ' In this demo, we’ll share the simulated result in your in-app notifications.'}
+        anytime to review the details.{match.simulationScheduled && ' Check your notifications for an update.'}
       </p>
       {match.offer?.financing > 0 && <div className="mt-5 rounded-xl border border-brand-100 bg-brand-50 p-4">
         <p className="text-sm font-semibold text-brand-700">Need a little support?</p>

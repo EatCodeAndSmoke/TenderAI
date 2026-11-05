@@ -53,6 +53,10 @@ namespace TenderAI.Api.Services
                     .AsSplitQuery().SingleAsync(c => c.CustomerId == customerId, ct);
                 var feedback = (await db.TenderFeedback.AsNoTracking().Where(f => f.CustomerId == customerId).ToListAsync(ct))
                     .ToDictionary(f => f.TenderId, f => f.Value);
+                var dislikedIds = feedback.Where(entry => entry.Value == "dislike").Select(entry => entry.Key).ToList();
+                var dislikedIdentities = (await db.Tenders.AsNoTracking().Include(t => t.Products)
+                    .Where(t => dislikedIds.Contains(t.Id) && !t.IsDeleted).ToListAsync(ct))
+                    .Select(TenderIdentity.For).OfType<string>().ToHashSet(StringComparer.Ordinal);
                 var seen = (await db.TenderDiscoverySeen.AsNoTracking().Where(s => s.CustomerId == customerId)
                     .Select(s => s.TenderId).ToListAsync(ct)).ToHashSet();
                 var savedLots = await db.Notifications.AsNoTracking().Where(n => n.CustomerId == customerId)
@@ -147,7 +151,7 @@ namespace TenderAI.Api.Services
                         if (timeLimit.IsCancellationRequested) { timeLimited = true; break; }
                         matches.TryGetValue(tender.Id.ToString(CultureInfo.InvariantCulture), out var match);
                         var identity = TenderIdentity.For(tender);
-                        if (identity is not null && savedIdentities.Contains(identity)) match = null;
+                        if (identity is not null && (savedIdentities.Contains(identity) || dislikedIdentities.Contains(identity))) match = null;
                         if (match is not null && (string.IsNullOrWhiteSpace(tender.Summary) || string.IsNullOrWhiteSpace(tender.EnglishTitle)))
                         {
                             yield return new TenderDiscoveryEvent("progress", matchedCount, Imported: importedCount, Checked: checkedCount, Phase: "summarizing");
@@ -201,7 +205,7 @@ namespace TenderAI.Api.Services
                             {
                                 Feedback = currentFeedback,
                                 AppliedAt = appliedAt.HasValue ? DateTime.SpecifyKind(appliedAt.Value, DateTimeKind.Utc) : null
-                            }, Imported: importedCount, Checked: checkedCount);
+                            }, Imported: importedCount, Checked: checkedCount, GroupKey: TenderIdentity.GroupKey(tender));
                         if (matchedCount == count || timeLimited) break;
                     }
                     if (timeLimited) break;
@@ -625,5 +629,6 @@ namespace TenderAI.Api.Services
 
     public sealed record TenderDiscoveryEvent(
         string Type, int Count = 0, TenderDto? Tender = null, NotificationDto? Match = null,
-        int Imported = 0, bool Limited = false, int Checked = 0, string? Phase = null, bool TimeLimited = false);
+        int Imported = 0, bool Limited = false, int Checked = 0, string? Phase = null, bool TimeLimited = false,
+        string? GroupKey = null);
 }

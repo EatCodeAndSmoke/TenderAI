@@ -1,16 +1,18 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using TenderAI.Api.Data.Entities;
 
 namespace TenderAI.Api.Services
 {
-    public static class TenderIdentity
+    public static partial class TenderIdentity
     {
         public static string? For(TenderEntity tender)
         {
             var buyer = Normalize(tender.BuyerName);
-            var name = Normalize(tender.Name);
+            var name = NormalizeTenderName(tender.Name);
             if (buyer.Length == 0 || name.Length == 0 || tender.EndDate == default
                 || string.IsNullOrWhiteSpace(tender.CurrencyCode))
                 return null;
@@ -37,7 +39,7 @@ namespace TenderAI.Api.Services
                 Buyer = buyer,
                 BuyerTin = Normalize(tender.BuyerTin),
                 Name = name,
-                DetailedName = Normalize(tender.DetailedName),
+                DetailedName = NormalizeTenderName(tender.DetailedName),
                 Description = Normalize(tender.Description),
                 AdditionalDescription = Normalize(tender.AdditionalDescription),
                 StartDate = Date(tender.StartDate),
@@ -66,6 +68,14 @@ namespace TenderAI.Api.Services
             });
         }
 
+        public static string GroupKey(TenderEntity tender)
+        {
+            var identity = For(tender);
+            return identity is null
+                ? $"lot:{tender.Id.ToString(CultureInfo.InvariantCulture)}"
+                : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
+        }
+
         private static string Date(DateTime value) => value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
         private static string? Number(decimal? value) => value?.ToString("G29", CultureInfo.InvariantCulture);
@@ -73,5 +83,10 @@ namespace TenderAI.Api.Services
         private static string Normalize(string? value) =>
             string.Join(" ", (value ?? "").Normalize(NormalizationForm.FormKC)
                 .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).ToUpperInvariant();
+
+        private static string NormalizeTenderName(string? value) => LotNumber().Replace(Normalize(value), "$1");
+
+        [GeneratedRegex(@"(?<![\p{L}\p{N}])(LOT|ЛОТ)\s*(?:№|NO\.?|#)?\s*\d+(?![\p{L}\p{N}])", RegexOptions.CultureInvariant)]
+        private static partial Regex LotNumber();
     }
 }

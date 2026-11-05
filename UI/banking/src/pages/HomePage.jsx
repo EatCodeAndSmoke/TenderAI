@@ -58,7 +58,7 @@ export default function HomePage() {
           <div className="mt-8 h-7 w-10 rounded-md bg-amber-100/80" aria-hidden="true" />
           <p className="mt-4 font-mono text-sm tracking-widest">••••  ••••  ••••  4821</p>
           <div className="mt-5 flex items-end justify-between"><span className="max-w-[70%] truncate text-xs uppercase tracking-wide">{customerName}</span><span className="text-xl font-black italic">VISA</span></div>
-        </div><p className="mt-2 text-xs text-muted">Illustrative card · not a real payment card</p>
+        </div>
       </div>
       <div><h2 className="mb-3 text-lg font-semibold">Loans</h2><div className="flex min-h-48 flex-col justify-center rounded-2xl border border-line bg-white p-5">
         <p className="font-medium">Financing for your next project</p><p className="mt-2 text-sm text-muted">Eligible tenders may include an invitation to apply for financing or a bid guarantee.</p>

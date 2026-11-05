@@ -23,7 +23,7 @@ export default function Sidebar() {
       </nav>
 
       <p className="mt-auto hidden px-3 text-xs leading-relaxed text-cobalt-soft md:block">
-        Demo data is saved to the database.
+        Data is saved to the database.
       </p>
     </aside>
   );

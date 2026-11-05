@@ -18,3 +18,13 @@ export function sortTenderResults(results) {
 export function prependMatch(results, match) {
   return sortTenderResults([match, ...results.filter(item => item.tender.id !== match.tender.id)]);
 }
+
+export function groupTenderResults(results) {
+  const groups = new Map();
+  for (const item of sortTenderResults(results)) {
+    const key = item.groupKey ?? `lot:${item.tender.id}`;
+    if (!groups.has(key)) groups.set(key, { key, lots: [] });
+    groups.get(key).lots.push(item);
+  }
+  return [...groups.values()];
+}

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { applyForTender, getDiscoveries, setFeedback, stream } from '../api.js';
 import { BTN_PRIMARY, money } from '../format.js';
-import { matchCategory, matchScore, prependMatch, sortTenderResults } from '../tenderResults.js';
+import { groupTenderResults, matchCategory, matchScore, prependMatch, sortTenderResults } from '../tenderResults.js';
 import { initialTenderProgress, tenderProgressMessage, updateTenderProgress } from '../tenderProgress.js';
 import { applicationUpdateContent } from '../applicationUpdates.js';
 import { useSession } from '../session.jsx';
@@ -11,6 +11,8 @@ import TenderApplicationDialog from '../components/TenderApplicationDialog.jsx';
 
 export default function TendersPage() {
   const { customerId, matchesLoading, rememberMatch, forgetMatch, updates } = useSession();
+  const [searchParams] = useSearchParams();
+  const requestedLot = Number(searchParams.get('lot'));
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -23,10 +25,12 @@ export default function TendersPage() {
   const [confirmation, setConfirmation] = useState(null);
   const [leaving, setLeaving] = useState(() => new Set());
   const [expanded, setExpanded] = useState({});
+  const [selectedLots, setSelectedLots] = useState({});
   const [feedbackTenderId, setFeedbackTenderId] = useState(null);
   const [feedbackComment, setFeedbackComment] = useState('');
   const abort = useRef(null);
   const removalTimers = useRef(new Set());
+  const hiddenGroups = useRef(new Set());
   useEffect(() => () => {
     abort.current?.abort();
     removalTimers.current.forEach(clearTimeout);
@@ -51,33 +55,41 @@ export default function TendersPage() {
     try {
       await stream(`/customers/${encodeURIComponent(customerId)}/discover/stream`, event => {
         setProgress(previous => updateTenderProgress(previous, event));
-        if (event.type === 'match') {
+        if (event.type === 'match' && !hiddenGroups.current.has(event.groupKey)) {
           setResults(previous => prependMatch(previous, { ...event, isOpen: true, isNew: true }));
           rememberMatch(event.match);
         }
       }, abort.current.signal);
+      const saved = await getDiscoveries(customerId);
+      const additions = saved.filter(item => !hiddenGroups.current.has(item.groupKey));
+      additions.forEach(item => rememberMatch(item.match));
+      setResults(previous => {
+        const ids = new Set(previous.map(item => item.tender.id));
+        return sortTenderResults([...previous, ...additions.filter(item => !ids.has(item.tender.id))]);
+      });
     } catch (err) { if (err.name !== 'AbortError') { setSearchFailed(true); setError(err.message); } }
     finally { setBusy(false); }
   }
-  async function feedback(item, value, comment = null) {
+  async function feedback(item, value, comment = null, group) {
     setActionBusy(item.tender.id); setError('');
     try {
       await setFeedback(customerId, item.tender.id, value, comment);
       if (value === 'dislike') {
         setFeedbackTenderId(null); setFeedbackComment('');
-        forgetMatch(item.match.lotId);
+        hiddenGroups.current.add(group.key);
+        group.lots.forEach(lot => forgetMatch(lot.match.lotId));
         const remove = () => {
-          setResults(previous => previous.filter(result => result.tender.id !== item.tender.id));
+          setResults(previous => previous.filter(result => (result.groupKey ?? `lot:${result.tender.id}`) !== group.key));
           setLeaving(previous => {
             const next = new Set(previous);
-            next.delete(item.tender.id);
+            next.delete(group.key);
             return next;
           });
         };
         if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
           remove();
         } else {
-          setLeaving(previous => new Set(previous).add(item.tender.id));
+          setLeaving(previous => new Set(previous).add(group.key));
           const timer = setTimeout(() => {
             removalTimers.current.delete(timer);
             remove();
@@ -133,28 +145,41 @@ export default function TendersPage() {
     </div>}
     {error && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
     {results.length > 0 && <p className="mt-5 text-xs text-muted">Fit scores are AI estimates, not guarantees. Review each opportunity before applying.</p>}
-    <div className="mt-5 space-y-4">{results.map(item => {
+    <div className="mt-5 space-y-4">{groupTenderResults(results).map(group => {
+      const item = group.lots.find(lot => lot.tender.id === selectedLots[group.key])
+        ?? group.lots.find(lot => lot.tender.id === requestedLot)
+        ?? group.lots.find(lot => lot.isOpen) ?? group.lots[0];
       const { tender: t, match } = item;
-      const isLeaving = leaving.has(t.id);
-      const isExpanded = expanded[t.id] ?? !match.appliedAt;
+      const isLeaving = leaving.has(group.key);
+      const isExpanded = expanded[t.id] ?? (t.id === requestedLot || !match.appliedAt);
       const update = updates.find(entry => entry.tenderId === t.id);
-      return <article key={t.id} className={`rounded-2xl border bg-white p-5 shadow-sm ${match.appliedAt ? 'tender-applied' : 'border-line'} ${isLeaving ? 'tender-leaving' : 'tender-arrival'}`}>
+      const appliedCount = group.lots.filter(lot => lot.match.appliedAt).length;
+      return <article key={group.key} className={`rounded-2xl border bg-white p-5 shadow-sm ${appliedCount ? 'tender-applied' : 'border-line'} ${isLeaving ? 'tender-leaving' : group.lots.some(lot => lot.isNew) ? 'tender-arrival-new' : 'tender-arrival'}`}>
         <div className="flex flex-wrap justify-between gap-2 text-xs text-muted"><span>UZEX · {t.displayNo}</span><span>{item.isOpen ? 'Closes' : 'Closed'} {new Date(t.endDate).toLocaleDateString('en-GB')}</span></div>
         <div className="flex flex-wrap items-center gap-2"><TenderFitBadge match={match} />
-          {match.appliedAt && <span className="mt-3 rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">✓ Applied · Demo</span>}
+          {match.appliedAt && <span className="mt-3 rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">✓ Applied</span>}
         </div>
         <h2 className="mt-2 text-lg font-semibold"><button type="button" aria-expanded={isExpanded} aria-controls={`tender-details-${t.id}`}
           onClick={() => setExpanded(previous => ({ ...previous, [t.id]: !isExpanded }))}
           className="flex w-full items-center justify-between gap-3 rounded-lg text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600">
           <span>{t.englishTitle}</span><span className="shrink-0 text-xs font-medium text-brand-700">{isExpanded ? 'Hide details' : 'View details'} <span aria-hidden="true">{isExpanded ? '⌃' : '⌄'}</span></span>
         </button></h2>
-        {match.appliedAt && <p className="mt-2 text-xs text-brand-700">{update ? applicationUpdateContent(update.outcome).title : 'Your demo request is saved.'}</p>}
+        {group.lots.length > 1 && <div className="mt-3 rounded-xl border border-brand-100 bg-brand-50 p-3">
+          <label htmlFor={`lots-${group.key}`} className="block text-sm font-semibold text-brand-700">{group.lots.length} similar lots</label>
+          <p className="mt-1 text-xs text-muted">Review each lot separately before applying.{appliedCount > 0 && ` ${appliedCount} of ${group.lots.length} applied.`}</p>
+          <select id={`lots-${group.key}`} value={t.id} disabled={actionBusy !== null || isLeaving}
+            onChange={event => { setSelectedLots(previous => ({ ...previous, [group.key]: Number(event.target.value) })); setFeedbackTenderId(null); setFeedbackComment(''); }}
+            className="mt-2 w-full rounded-lg border border-line bg-white px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-brand-600">
+            {group.lots.map(lot => <option key={lot.tender.id} value={lot.tender.id}>{lot.tender.displayNo}{lot.match.appliedAt ? ' · Applied' : ''}{!lot.isOpen ? ' · Closed' : ''}</option>)}
+          </select>
+        </div>}
+        {match.appliedAt && <p className="mt-2 text-xs text-brand-700">{update ? applicationUpdateContent(update.outcome).title : 'Your request is saved.'}</p>}
         <div id={`tender-details-${t.id}`} className={`tender-details ${isExpanded ? 'is-expanded' : ''}`} aria-hidden={!isExpanded} inert={!isExpanded}>
         <div className="tender-details-inner"><p className="mt-2 text-sm leading-relaxed text-ink/80">{t.summary}</p>
         <div className="mt-4 flex flex-wrap gap-3 text-sm"><span className="rounded-lg bg-subtle px-3 py-2"><span className="text-muted">Budget </span><strong>{money(t.startPrice)} {t.currencyCode}</strong></span>{t.depositAmount != null && <span className="rounded-lg bg-subtle px-3 py-2"><span className="text-muted">Deposit </span><strong>{money(t.depositAmount)} {t.currencyCode}</strong></span>}</div>
         <TenderMatchExplanation match={match} isOpen={item.isOpen} />
         <div className="mt-4 flex flex-wrap items-center gap-3">
-          <button type="button" aria-label={`Like ${t.englishTitle}`} aria-pressed={match.feedback === 'like'} disabled={actionBusy !== null || isLeaving} onClick={() => feedback(item, 'like')} className="rounded-lg border border-line px-3 py-2 text-sm aria-pressed:bg-brand-100 disabled:opacity-50">👍 {match.feedback === 'like' ? 'Liked' : 'Like'}</button>
+          <button type="button" aria-label={`Like ${t.englishTitle}`} aria-pressed={match.feedback === 'like'} disabled={actionBusy !== null || isLeaving} onClick={() => feedback(item, 'like', null, group)} className="rounded-lg border border-line px-3 py-2 text-sm aria-pressed:bg-brand-100 disabled:opacity-50">👍 {match.feedback === 'like' ? 'Liked' : 'Like'}</button>
           <button type="button" id={`feedback-trigger-${t.id}`} aria-label={`Dislike ${t.englishTitle}`} aria-expanded={feedbackTenderId === t.id}
             aria-controls={feedbackTenderId === t.id ? `feedback-form-${t.id}` : undefined}
             disabled={actionBusy !== null || isLeaving} onClick={() => { setFeedbackTenderId(t.id); setFeedbackComment(''); }} className="rounded-lg border border-line px-3 py-2 text-sm disabled:opacity-50">👎 Not for me</button>
@@ -165,7 +190,7 @@ export default function TendersPage() {
         </div>
         {feedbackTenderId === t.id && <form id={`feedback-form-${t.id}`} className="feedback-arrival mt-4 rounded-xl border border-line bg-subtle p-4" onSubmit={event => {
           event.preventDefault();
-          feedback(item, 'dislike', feedbackComment);
+          feedback(item, 'dislike', feedbackComment, group);
         }}>
           <label htmlFor={`feedback-${t.id}`} className="text-sm font-semibold">Help us understand <span className="font-normal text-muted">(optional)</span></label>
           <p className="mt-1 text-xs text-muted">What made this opportunity less relevant to your business?</p>
@@ -177,7 +202,7 @@ export default function TendersPage() {
           </div>
         </form>}
         {match.appliedAt && <p className="mt-3 rounded-lg bg-brand-50 p-3 text-sm text-brand-700">
-          {update ? applicationUpdateContent(update.outcome).detail : 'Your demo request is saved. Check Notifications for updates.'}
+          {update ? applicationUpdateContent(update.outcome).detail : 'Your request is saved. Check Notifications for updates.'}
         </p>}
         </div></div>
       </article>;

@@ -182,7 +182,7 @@ public class TenderDiscoveryTests
         var updates = (await controller.GetNotifications("C-1", CancellationToken.None)).Value!.ToList();
         Assert.Equal(2, updates.Count);
         Assert.Contains(updates, u => u.TenderId == 2 && u.Outcome == "sent" && !u.IsRead);
-        Assert.Contains(updates, u => u.TenderId == 3 && u.Outcome == "needs_details" && !u.IsRead);
+        Assert.Contains(updates, u => u.TenderId == 3 && u.Outcome == "sent" && !u.IsRead);
         Assert.IsType<NoContentResult>(await controller.MarkNotificationsRead("C-1", new([2, 4]), CancellationToken.None));
         var afterRead = (await controller.GetNotifications("C-1", CancellationToken.None)).Value!.ToList();
         Assert.True(afterRead.Single(u => u.TenderId == 2).IsRead);
@@ -251,7 +251,7 @@ public class TenderDiscoveryTests
         var application = (await controller.Apply("c-1", 1, CancellationToken.None)).Value!;
         Assert.True(application.SimulationScheduled);
         var outcome = (await db.TenderApplications.AsNoTracking().SingleAsync()).SimulatedOutcome;
-        Assert.Contains(outcome, new[] { "sent", "needs_details" });
+        Assert.Equal("sent", outcome);
         Assert.Equal("applied", application.Status);
         Assert.Equal(DateTimeKind.Utc, application.AppliedAt.Kind);
         Assert.Equal(application, (await controller.Apply("C-1", 1, CancellationToken.None)).Value);
@@ -645,7 +645,10 @@ public class TenderDiscoveryTests
         Assert.Contains(events, e => e.Type == "progress" && e.Phase == "matching" && e.Checked == 4 && e.Count == 0);
         Assert.Equal(4, events.Single(e => e.Type == "completed").Checked);
         Assert.Equal(4, await db.TenderDiscoverySeen.CountAsync());
-        Assert.Equal(3, (await new CustomersController(db).GetDiscoveries("C-1", CancellationToken.None)).Value!.Count());
+        var saved = (await new CustomersController(db).GetDiscoveries("C-1", CancellationToken.None)).Value!.ToList();
+        Assert.Equal(4, saved.Count);
+        Assert.Equal(3, saved.Select(item => item.GroupKey).Distinct().Count());
+        Assert.Equal(events.Single(e => e.Tender?.Id == 1).GroupKey, saved.Single(item => item.Tender.Id == 2).GroupKey);
     }
 
     [Fact]
@@ -669,9 +672,11 @@ public class TenderDiscoveryTests
         await foreach (var _ in Matcher(db).RunStreamingAsync(CancellationToken.None, "C-1")) { }
         Assert.Equal(2, await db.Notifications.CountAsync());
         var controller = new CustomersController(db);
-        var shown = Assert.Single((await controller.GetDiscoveries("C-1", CancellationToken.None)).Value!);
-        Assert.Single((await controller.GetMatches("C-1", CancellationToken.None)).Value!);
-        await controller.SetFeedback("C-1", shown.Tender.Id, new TenderFeedbackRequest("dislike"), CancellationToken.None);
+        var shown = (await controller.GetDiscoveries("C-1", CancellationToken.None)).Value!.ToList();
+        Assert.Equal(2, shown.Count);
+        Assert.Single(shown.Select(item => item.GroupKey).Distinct());
+        Assert.Equal(2, (await controller.GetMatches("C-1", CancellationToken.None)).Value!.Count());
+        await controller.SetFeedback("C-1", shown[0].Tender.Id, new TenderFeedbackRequest("dislike"), CancellationToken.None);
         Assert.Empty((await controller.GetDiscoveries("C-1", CancellationToken.None)).Value!);
         var third = Tender(3);
         third.StartPrice = one.StartPrice;
@@ -709,15 +714,127 @@ public class TenderDiscoveryTests
 
         closed.EndDate = now.Date;
         await db.SaveChangesAsync();
-        var shown = Assert.Single((await controller.GetDiscoveries("C-1", CancellationToken.None)).Value!);
-        Assert.Equal(open.Id, shown.Tender.Id);
-        Assert.True(shown.IsOpen);
+        var shown = (await controller.GetDiscoveries("C-1", CancellationToken.None)).Value!.ToList();
+        Assert.Equal(2, shown.Count);
+        Assert.True(shown.Single(item => item.Tender.Id == open.Id).IsOpen);
+        Assert.False(shown.Single(item => item.Tender.Id == closed.Id).IsOpen);
+        Assert.Single(shown.Select(item => item.GroupKey).Distinct());
         Assert.Equal(open.Id.ToString(), Assert.Single((await controller.GetMatches("C-1", CancellationToken.None)).Value!).LotId);
 
         await controller.SetFeedback("C-1", closed.Id, new TenderFeedbackRequest("dislike"), CancellationToken.None);
         Assert.Empty((await controller.GetDiscoveries("C-1", CancellationToken.None)).Value!);
         Assert.Empty((await controller.GetMatches("C-1", CancellationToken.None)).Value!);
         Assert.Single(await db.TenderApplications.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task SimilarLotsRemainIndependentlyApplicableEvenWhenOnlyOneWasSaved()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.AddRange(Customer("C-1"), Customer("C-2"));
+        var first = Tender(520630);
+        var second = Tender(520631);
+        first.Name = "Furniture Lot №2 / Лот №2";
+        second.Name = "Furniture Lot №3 / Лот №3";
+        second.StartPrice = first.StartPrice;
+        second.StartDate = first.StartDate.AddSeconds(31);
+        first.EndDate = DateTime.UtcNow.AddHours(5).Date.AddDays(10).AddHours(12);
+        second.EndDate = first.EndDate.AddSeconds(31);
+        second.Summary = null;
+        second.EnglishTitle = null;
+        db.Tenders.AddRange(first, second);
+        await db.SaveChangesAsync();
+        using var http = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
+        var events = new List<TenderDiscoveryEvent>();
+        await foreach (var item in Matcher(db).DiscoverAsync("C-1", 2, Importer(db, http), CancellationToken.None)) events.Add(item);
+        Assert.Single(events, item => item.Type == "match");
+        Assert.Equal(1, events.Single(item => item.Type == "completed").Count);
+        Assert.Equal(2, await db.TenderDiscoverySeen.CountAsync());
+        Assert.Single(await db.Notifications.ToListAsync());
+        var controller = new CustomersController(db);
+        var saved = (await controller.GetDiscoveries("C-1", CancellationToken.None)).Value!.ToList();
+        Assert.Equal(2, saved.Count);
+        Assert.Single(saved.Select(item => item.GroupKey).Distinct());
+        var related = saved.Single(item => item.Tender.Id == second.Id);
+        Assert.Equal(second.SourceUrl, related.Match.SourceUrl);
+        Assert.False(string.IsNullOrWhiteSpace(related.Tender.EnglishTitle));
+        Assert.False(string.IsNullOrWhiteSpace(related.Tender.Summary));
+        Assert.Equal(88, related.Match.MatchScore);
+        Assert.IsType<ConflictObjectResult>((await controller.Apply("C-2", second.Id, CancellationToken.None)).Result);
+        var secondApplication = (await controller.Apply("C-1", second.Id, CancellationToken.None)).Value!;
+        Assert.NotNull(secondApplication);
+        Assert.Equal(2, await db.Notifications.CountAsync());
+        var firstApplication = (await controller.Apply("C-1", first.Id, CancellationToken.None)).Value!;
+        Assert.NotNull(firstApplication);
+        Assert.Equal(2, await db.TenderApplications.CountAsync());
+        db.ChangeTracker.Clear();
+        var reloaded = (await controller.GetDiscoveries("C-1", CancellationToken.None)).Value!.ToList();
+        Assert.Equal(firstApplication.AppliedAt, reloaded.Single(item => item.Tender.Id == first.Id).Match.AppliedAt);
+        Assert.Equal(secondApplication.AppliedAt, reloaded.Single(item => item.Tender.Id == second.Id).Match.AppliedAt);
+        Assert.All(await db.TenderApplications.ToListAsync(), application => application.AppliedAt = DateTime.UtcNow.AddMinutes(-1));
+        await db.SaveChangesAsync();
+        var updates = (await controller.GetNotifications("C-1", CancellationToken.None)).Value!.ToList();
+        Assert.Equal(new[] { first.Id, second.Id }, updates.Select(update => update.TenderId).Order().ToArray());
+        Assert.Equal(second.DisplayNo, updates.Single(update => update.TenderId == second.Id).DisplayNo);
+        Assert.Equal(first.EnglishTitle, updates.Single(update => update.TenderId == second.Id).TenderTitle);
+        await controller.SetFeedback("C-1", second.Id, new TenderFeedbackRequest("dislike", "Not relevant"), CancellationToken.None);
+        Assert.Empty((await controller.GetDiscoveries("C-1", CancellationToken.None)).Value!);
+        Assert.Equal(2, await db.TenderApplications.CountAsync());
+    }
+
+    [Fact]
+    public async Task RemovingOriginalLotKeepsSeparatelyAppliedRelatedLot()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        var first = Tender(1);
+        var second = Tender(2);
+        first.Name = "Bread Lot №1";
+        second.Name = "Bread Lot №2";
+        second.StartPrice = first.StartPrice;
+        second.EndDate = first.EndDate;
+        db.Tenders.AddRange(first, second);
+        await db.SaveChangesAsync();
+        using var http = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
+        await foreach (var _ in Matcher(db).DiscoverAsync("C-1", 1, Importer(db, http), CancellationToken.None)) { }
+        var customers = new CustomersController(db);
+        Assert.NotNull((await customers.Apply("C-1", second.Id, CancellationToken.None)).Value);
+        Assert.IsType<NoContentResult>(await new TendersController(db).Delete(first.Id, CancellationToken.None));
+        db.ChangeTracker.Clear();
+        var remaining = Assert.Single((await customers.GetDiscoveries("C-1", CancellationToken.None)).Value!);
+        Assert.Equal(second.Id, remaining.Tender.Id);
+        Assert.NotNull(remaining.Match.AppliedAt);
+        Assert.Equal(second.SourceUrl, remaining.Match.SourceUrl);
+    }
+
+    [Fact]
+    public async Task ADislikedLotSuppressesItsPreviouslyUnmatchedSimilarLot()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        var first = Tender(1);
+        var second = Tender(2);
+        first.Name = "Bread Lot №1";
+        second.Name = "Bread Lot №2";
+        second.StartPrice = first.StartPrice;
+        second.EndDate = first.EndDate;
+        db.Tenders.AddRange(first, second);
+        db.TenderFeedback.Add(new TenderFeedbackEntity { CustomerId = "C-1", TenderId = first.Id, Value = "dislike" });
+        await db.SaveChangesAsync();
+        using var http = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
+        var events = new List<TenderDiscoveryEvent>();
+        await foreach (var item in Matcher(db).DiscoverAsync("C-1", 1, Importer(db, http), CancellationToken.None)) events.Add(item);
+        Assert.DoesNotContain(events, item => item.Type == "match");
+        Assert.Empty(await db.Notifications.ToListAsync());
     }
 
     [Fact]

@@ -91,7 +91,7 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <p className="mt-4 text-center text-xs text-muted">Prototype access: use an existing customer ID and the password 123.</p>
+        <p className="mt-4 text-center text-xs text-muted">Use your customer ID and the password 123.</p>
       </div>
     </section>
   );

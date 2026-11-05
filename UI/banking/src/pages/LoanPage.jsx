@@ -125,7 +125,7 @@ function LoanForm({ notification: n, customerId, onSent }) {
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-subtle px-5 py-4">
-          <p className="text-xs text-muted">Demo only: no application will be submitted to the bank.</p>
+          <p className="text-xs text-muted">Review your details before continuing.</p>
           <button type="submit" className={BTN_PRIMARY}>Preview request</button>
         </div>
       </form>
@@ -141,10 +141,10 @@ function LoanSent({ notification: n, request }) {
       <span className="mx-auto grid size-12 place-items-center rounded-full bg-brand-50 text-brand-600">
         <CheckIcon className="size-6" />
       </span>
-      <h1 className="mt-4 text-xl font-semibold">Demo request prepared</h1>
+      <h1 className="mt-4 text-xl font-semibold">Your request preview is ready</h1>
       <p className="mt-2 text-sm text-muted">
-        Your demo request for {money(request.amount)} so'm of {LOAN_PRODUCTS[request.product].name.toLowerCase()} for
-        tender {n.lotId} has not been submitted to the bank.
+        Review your request for {money(request.amount)} so'm of {LOAN_PRODUCTS[request.product].name.toLowerCase()} for
+        tender {n.lotId}. This preview has not been submitted to the bank.
       </p>
       <p className="mt-4 text-xs text-muted">Request number <span className="font-medium text-ink">{number}</span></p>
       <Link to="/tenders" className={`${BTN_PRIMARY} mt-6`}>Back to tenders</Link>

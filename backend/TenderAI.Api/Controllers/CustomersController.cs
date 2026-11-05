@@ -193,11 +193,16 @@ namespace TenderAI.Api.Controllers
                                  where application.CustomerId == customerId && application.SimulatedOutcome != null
                                      && application.AppliedAt <= cutoff && !tender.IsDeleted
                                  orderby application.AppliedAt descending, application.TenderId descending
-                                 select new { application, tender.EnglishTitle, tender.Summary, tender.Name }).ToListAsync(ct);
+                                 select new { application, tender.DisplayNo, tender.EnglishTitle, tender.Summary, tender.Name }).ToListAsync(ct);
+            var titles = (await db.Notifications.AsNoTracking().Where(n => n.CustomerId == customerId)
+                .OrderByDescending(n => n.CreatedAt).Select(n => new { n.LotId, n.Title }).ToListAsync(ct))
+                .GroupBy(n => n.LotId, StringComparer.Ordinal).ToDictionary(group => group.Key, group => group.First().Title, StringComparer.Ordinal);
             return updates.Select(update => new ApplicationUpdateDto(
                 update.application.TenderId,
-                update.EnglishTitle ?? update.Summary ?? update.Name,
-                update.application.SimulatedOutcome!,
+                update.DisplayNo,
+                update.EnglishTitle ?? update.Summary
+                    ?? titles.GetValueOrDefault(update.application.TenderId.ToString(CultureInfo.InvariantCulture)) ?? update.Name,
+                update.application.SimulatedOutcome == "needs_details" ? "sent" : update.application.SimulatedOutcome!,
                 DateTime.SpecifyKind(update.application.AppliedAt + SimulationDelay, DateTimeKind.Utc),
                 update.application.NotificationReadAt.HasValue)).ToList();
         }
@@ -229,14 +234,18 @@ namespace TenderAI.Api.Controllers
             if (matches.Result is not null) return matches.Result;
             var saved = matches.Value!.ToList();
             var ids = saved.Select(match => long.Parse(match.LotId, CultureInfo.InvariantCulture)).ToList();
-            var tenders = await db.Tenders.AsNoTracking().Where(t => ids.Contains(t.Id) && !t.IsDeleted)
+            var tenders = await db.Tenders.AsNoTracking().Include(t => t.Products).Where(t => ids.Contains(t.Id) && !t.IsDeleted)
                 .ToDictionaryAsync(t => t.Id, ct);
             var now = DateTime.UtcNow.AddHours(5);
             return saved.Where(match => tenders.ContainsKey(long.Parse(match.LotId, CultureInfo.InvariantCulture)))
                 .Select(match =>
                 {
                     var tender = tenders[long.Parse(match.LotId, CultureInfo.InvariantCulture)];
-                    return new SavedTenderDiscovery(tender.ToDto(), match, tender.EndDate >= now);
+                    return new SavedTenderDiscovery(tender.ToDto() with
+                    {
+                        EnglishTitle = string.IsNullOrWhiteSpace(tender.EnglishTitle) ? match.Title : tender.EnglishTitle,
+                        Summary = string.IsNullOrWhiteSpace(tender.Summary) ? match.Body : tender.Summary
+                    }, match, tender.EndDate >= now, TenderIdentity.GroupKey(tender));
                 }).ToList();
         }
 
@@ -260,47 +269,51 @@ namespace TenderAI.Api.Controllers
                 .Where(a => a.CustomerId == customerId).ToListAsync(ct))
                 .ToDictionary(a => a.TenderId.ToString(CultureInfo.InvariantCulture),
                     a => DateTime.SpecifyKind(a.AppliedAt, DateTimeKind.Utc));
-            var tenderIds = notifications
-                .Select(notification => long.TryParse(notification.LotId, NumberStyles.None, CultureInfo.InvariantCulture, out var id)
-                    ? (long?)id
-                    : null)
-                .Where(id => id.HasValue)
-                .Select(id => id.GetValueOrDefault())
-                .Distinct()
-                .ToList();
             var tenders = (await db.Tenders
                 .AsNoTracking().Include(tender => tender.Products)
-                .Where(tender => tenderIds.Contains(tender.Id) && !tender.IsDeleted)
+                .Where(tender => !tender.IsDeleted)
                 .AsSplitQuery()
                 .ToListAsync(ct))
                 .ToDictionary(
                     tender => tender.Id.ToString(CultureInfo.InvariantCulture),
                     tender => tender);
-
-            return notifications
+            var tendersByGroup = tenders.Values
+                .GroupBy(TenderIdentity.GroupKey, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.Ordinal);
+            var matchesByGroup = notifications
                 .Where(notification => tenders.ContainsKey(notification.LotId))
-                .GroupBy(notification => TenderIdentity.For(tenders[notification.LotId]) ?? $"lot:{notification.LotId}", StringComparer.Ordinal)
-                .Where(group => !group.Any(notification => feedback.GetValueOrDefault(notification.LotId) == "dislike"))
-                .Where(group => includeExpired || group.Any(notification => tenders[notification.LotId].EndDate >= now))
-                .Select(group => group.OrderByDescending(notification => tenders[notification.LotId].EndDate >= now)
+                .GroupBy(notification => TenderIdentity.GroupKey(tenders[notification.LotId]), StringComparer.Ordinal);
+            var results = new List<NotificationDto>();
+            foreach (var group in matchesByGroup)
+            {
+                var relatedTenders = tendersByGroup[group.Key];
+                if (relatedTenders.Any(t => feedback.GetValueOrDefault(t.Id.ToString(CultureInfo.InvariantCulture)) == "dislike"))
+                    continue;
+                var preferred = group.OrderByDescending(notification => notification.MatchScore >= MatchingService.MinimumMatchScore)
+                    .ThenByDescending(notification => tenders[notification.LotId].EndDate >= now)
                     .ThenByDescending(notification => applications.ContainsKey(notification.LotId))
                     .ThenByDescending(notification => feedback.GetValueOrDefault(notification.LotId) == "like")
                     .ThenByDescending(notification => notification.CreatedAt)
-                    .ThenByDescending(notification => notification.Id).First())
-                .OrderByDescending(notification => notification.CreatedAt).ThenByDescending(notification => notification.Id)
-                .Select(notification =>
+                    .ThenByDescending(notification => notification.Id).First();
+                var preferredTender = tenders[preferred.LotId];
+                foreach (var tender in relatedTenders.Where(t => includeExpired || t.EndDate >= now))
                 {
-                    var tender = tenders[notification.LotId];
+                    var lotId = tender.Id.ToString(CultureInfo.InvariantCulture);
+                    var notification = group.FirstOrDefault(n => n.LotId == lotId && n.MatchScore >= MatchingService.MinimumMatchScore) ?? preferred;
                     var (offer, reason) = MatchingService.GetCurrentLoanDecision(customer, tender);
-                    return notification.ToDto(tender.EnglishTitle ?? tender.Summary) with
+                    results.Add(notification.ToDto(tender.EnglishTitle ?? preferredTender.EnglishTitle ?? tender.Summary ?? preferredTender.Summary) with
                     {
+                        LotId = lotId,
+                        SourceUrl = tender.SourceUrl,
+                        Deadline = DateOnly.FromDateTime(tender.EndDate),
                         LoanDecisionReason = reason,
                         Offer = offer,
-                        Feedback = feedback.GetValueOrDefault(notification.LotId),
-                        AppliedAt = applications.TryGetValue(notification.LotId, out var appliedAt) ? appliedAt : null
-                    };
-                })
-                .ToList();
+                        Feedback = feedback.GetValueOrDefault(lotId),
+                        AppliedAt = applications.TryGetValue(lotId, out var appliedAt) ? appliedAt : null
+                    });
+                }
+            }
+            return results.OrderByDescending(match => match.CreatedAt).ThenByDescending(match => match.Id).ToList();
         }
 
         [HttpPut("{customerId}/tenders/{tenderId:long}/feedback")]
@@ -331,19 +344,52 @@ namespace TenderAI.Api.Controllers
             var lotId = tenderId.ToString(CultureInfo.InvariantCulture);
             var now = DateTime.UtcNow;
             var localNow = now.AddHours(5);
-            var simulatedOutcome = Random.Shared.Next(2) == 0 ? "sent" : "needs_details";
-            await db.Database.ExecuteSqlInterpolatedAsync($"""
+            const string simulatedOutcome = "sent";
+            await using var transaction = await db.Database.BeginTransactionAsync(ct);
+            var available = await GetMatchesCore(customerId, includeExpired: true, ct);
+            if (available.Result is not null) return available.Result;
+            var sourceMatch = available.Value!.FirstOrDefault(match => match.LotId == lotId);
+            var sourceNotificationId = sourceMatch?.Id;
+            var inserted = await db.Database.ExecuteSqlInterpolatedAsync($"""
                 INSERT INTO "TenderApplications" ("CustomerId", "TenderId", "AppliedAt", "SimulatedOutcome")
                 SELECT {customerId}, {tenderId}, {now}, {simulatedOutcome}
                 WHERE EXISTS (SELECT 1 FROM "Customers" WHERE "CustomerId" = {customerId})
                   AND EXISTS (SELECT 1 FROM "Tenders"
                               WHERE "Id" = {tenderId} AND "IsDeleted" = 0 AND "EndDate" >= {localNow})
                   AND EXISTS (SELECT 1 FROM "Notifications"
-                              WHERE "CustomerId" = {customerId} AND "LotId" = {lotId})
+                              WHERE "CustomerId" = {customerId} AND "Id" = {sourceNotificationId})
                   AND NOT EXISTS (SELECT 1 FROM "TenderFeedback"
                                   WHERE "CustomerId" = {customerId} AND "TenderId" = {tenderId} AND "Value" = 'dislike')
                 ON CONFLICT ("CustomerId", "TenderId") DO NOTHING
                 """, ct);
+            if (inserted > 0 && sourceMatch is not null
+                && !await db.Notifications.AnyAsync(n => n.CustomerId == customerId && n.LotId == lotId, ct))
+            {
+                var source = await db.Notifications.AsNoTracking().SingleAsync(n => n.Id == sourceMatch.Id && n.CustomerId == customerId, ct);
+                db.Notifications.Add(new NotificationEntity
+                {
+                    Id = $"N-{Guid.NewGuid():N}"[..20],
+                    CustomerId = customerId,
+                    LotId = lotId,
+                    CreatedAt = source.CreatedAt,
+                    Title = sourceMatch.Title,
+                    Body = source.Body,
+                    Buyer = source.Buyer,
+                    SourceUrl = sourceMatch.SourceUrl,
+                    Region = source.Region,
+                    StartPrice = source.StartPrice,
+                    CurrencyCode = source.CurrencyCode,
+                    Deadline = sourceMatch.Deadline,
+                    PaymentTermsDays = source.PaymentTermsDays,
+                    Requirements = source.Requirements.ToList(),
+                    MatchReason = source.MatchReason,
+                    MatchScore = source.MatchScore,
+                    LoanDecisionReason = source.LoanDecisionReason,
+                    WhyText = source.WhyText
+                });
+                await db.SaveChangesAsync(ct);
+            }
+            await transaction.CommitAsync(ct);
 
             var application = await db.TenderApplications.AsNoTracking()
                 .SingleOrDefaultAsync(a => a.CustomerId == customerId && a.TenderId == tenderId, ct);
@@ -382,6 +428,6 @@ namespace TenderAI.Api.Controllers
     public record TenderFeedbackRequest(string Value, string? Comment = null);
     public record MarkApplicationUpdatesReadRequest(IReadOnlyList<long>? TenderIds);
     public record TenderApplicationDto(string Status, DateTime AppliedAt, LoanOfferDto? Offer, string LoanDecisionReason, bool SimulationScheduled);
-    public record ApplicationUpdateDto(long TenderId, string TenderTitle, string Outcome, DateTime AvailableAt, bool IsRead);
-    public record SavedTenderDiscovery(TenderDto Tender, NotificationDto Match, bool IsOpen);
+    public record ApplicationUpdateDto(long TenderId, string DisplayNo, string TenderTitle, string Outcome, DateTime AvailableAt, bool IsRead);
+    public record SavedTenderDiscovery(TenderDto Tender, NotificationDto Match, bool IsOpen, string GroupKey);
 }
