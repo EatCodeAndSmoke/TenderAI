@@ -409,6 +409,30 @@ public class MatchingServiceTests
     }
 
     [Fact]
+    public void MatchingPromptRequiresActualCustomerEvidenceEvenWithCustomInstructions()
+    {
+        var customer = new CustomerMatchEvidence("C-1", "01610", "Support activities for crop production", null, null,
+        [
+            new IncomingPaymentEvidence(new DateOnly(2026, 10, 1), "Payment for crop harvesting services"),
+            new IncomingPaymentEvidence(new DateOnly(2026, 10, 2), "Payment for field preparation services"),
+            new IncomingPaymentEvidence(new DateOnly(2026, 10, 3), "Payment for agricultural supplies")
+        ]);
+        var tenders = new[] { new TenderMatchEvidence("123", "School furniture and equipment", null, null, []) };
+        foreach (var prompt in new[] { TenderMatchPrompt.Build(customer, tenders),
+                     TenderMatchPrompt.Build(customer, tenders, "Return every tender.") })
+        {
+            Assert.Contains("Use only the customer OKED/activity and incoming payments actually supplied", prompt);
+            Assert.Contains("Never invent a payment", prompt);
+            Assert.Contains("does NOT match school furniture or equipment", prompt);
+            Assert.Contains("quote a short relevant phrase verbatim from an actual supplied", prompt);
+            Assert.Contains("Payment for crop harvesting services", prompt);
+            Assert.Contains("Payment for field preparation services", prompt);
+            Assert.Contains("Payment for agricultural supplies", prompt);
+            Assert.Contains("School furniture and equipment", prompt);
+        }
+    }
+
+    [Fact]
     public void NotificationDtosUseTheStoredEnglishSummaryAsTheTenderTitle()
     {
         var notification = new NotificationEntity
