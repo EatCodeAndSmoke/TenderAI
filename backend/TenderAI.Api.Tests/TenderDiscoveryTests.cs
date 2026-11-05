@@ -372,17 +372,22 @@ public class TenderDiscoveryTests
         db.Customers.Add(Customer("C-1"));
         var one = Tender(1);
         var duplicate = Tender(2);
-        duplicate.EndDate = one.EndDate;
+        one.StartDate = new DateTime(2026, 10, 20, 11, 59, 28);
+        duplicate.StartDate = one.StartDate.AddSeconds(31);
+        one.EndDate = DateTime.UtcNow.AddHours(5).Date.AddDays(10).AddHours(11).AddMinutes(59).AddSeconds(28);
+        duplicate.EndDate = one.EndDate.AddSeconds(31);
         duplicate.StartPrice = one.StartPrice;
         duplicate.BuyerName = " BUYER ";
         one.Products.Add(new TenderProductEntity { ProductName = "Bread", Quantity = 10, Unit = "kg", OrderNum = 1 });
         duplicate.Products.Add(new TenderProductEntity { ProductName = " bread ", Quantity = 10, Unit = "KG", OrderNum = 1 });
         var differentQuantity = Tender(3);
-        differentQuantity.EndDate = one.EndDate;
+        differentQuantity.StartDate = one.StartDate;
+        differentQuantity.EndDate = one.EndDate.AddSeconds(73);
         differentQuantity.StartPrice = one.StartPrice;
         differentQuantity.Products.Add(new TenderProductEntity { ProductName = "Bread", Quantity = 20, Unit = "kg", OrderNum = 1 });
         var differentPrice = Tender(4);
-        differentPrice.EndDate = one.EndDate;
+        differentPrice.StartDate = one.StartDate;
+        differentPrice.EndDate = one.EndDate.AddSeconds(73);
         differentPrice.Products.Add(new TenderProductEntity { ProductName = "Bread", Quantity = 10, Unit = "kg", OrderNum = 1 });
         db.Tenders.AddRange(one, duplicate, differentQuantity, differentPrice);
         await db.SaveChangesAsync();
@@ -408,7 +413,10 @@ public class TenderDiscoveryTests
         var one = Tender(1);
         var duplicate = Tender(2);
         duplicate.StartPrice = one.StartPrice;
-        duplicate.EndDate = one.EndDate;
+        one.StartDate = new DateTime(2026, 10, 20, 11, 59, 28);
+        duplicate.StartDate = one.StartDate.AddSeconds(31);
+        one.EndDate = DateTime.UtcNow.AddHours(5).Date.AddDays(10).AddHours(11).AddMinutes(59).AddSeconds(28);
+        duplicate.EndDate = one.EndDate.AddSeconds(31);
         db.Tenders.AddRange(one, duplicate);
         await db.SaveChangesAsync();
         await foreach (var _ in Matcher(db).RunStreamingAsync(CancellationToken.None, "C-1")) { }
@@ -420,7 +428,8 @@ public class TenderDiscoveryTests
         Assert.Empty((await controller.GetDiscoveries("C-1", CancellationToken.None)).Value!);
         var third = Tender(3);
         third.StartPrice = one.StartPrice;
-        third.EndDate = one.EndDate;
+        third.StartDate = one.StartDate.AddSeconds(73);
+        third.EndDate = one.EndDate.AddSeconds(73);
         db.Tenders.Add(third);
         await db.SaveChangesAsync();
         using var http = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
@@ -428,6 +437,40 @@ public class TenderDiscoveryTests
         await foreach (var item in Matcher(db).DiscoverAsync("C-1", 1, Importer(db, http), CancellationToken.None)) events.Add(item);
         Assert.DoesNotContain(events, e => e.Type == "match");
         Assert.Empty((await controller.GetDiscoveries("C-1", CancellationToken.None)).Value!);
+    }
+
+    [Fact]
+    public async Task DuplicateGroupPrefersOpenCopyAndHonorsDislikeOnExpiredCopy()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options;
+        await using var db = new TenderAiDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        var now = DateTime.UtcNow.AddHours(5);
+        var closed = Tender(1);
+        var open = Tender(2);
+        closed.EndDate = now.Date.AddDays(1).AddTicks(-1);
+        open.EndDate = closed.EndDate;
+        open.StartPrice = closed.StartPrice;
+        db.Tenders.AddRange(closed, open);
+        await db.SaveChangesAsync();
+        await foreach (var _ in Matcher(db).RunStreamingAsync(CancellationToken.None, "C-1")) { }
+        var controller = new CustomersController(db);
+        Assert.NotNull((await controller.Apply("C-1", closed.Id, CancellationToken.None)).Value);
+
+        closed.EndDate = now.Date;
+        await db.SaveChangesAsync();
+        var shown = Assert.Single((await controller.GetDiscoveries("C-1", CancellationToken.None)).Value!);
+        Assert.Equal(open.Id, shown.Tender.Id);
+        Assert.True(shown.IsOpen);
+        Assert.Equal(open.Id.ToString(), Assert.Single((await controller.GetMatches("C-1", CancellationToken.None)).Value!).LotId);
+
+        await controller.SetFeedback("C-1", closed.Id, new TenderFeedbackRequest("dislike"), CancellationToken.None);
+        Assert.Empty((await controller.GetDiscoveries("C-1", CancellationToken.None)).Value!);
+        Assert.Empty((await controller.GetMatches("C-1", CancellationToken.None)).Value!);
+        Assert.Single(await db.TenderApplications.AsNoTracking().ToListAsync());
     }
 
     [Fact]

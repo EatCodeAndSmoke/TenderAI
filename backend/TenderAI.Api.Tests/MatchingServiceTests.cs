@@ -310,9 +310,9 @@ public class MatchingServiceTests
         Assert.Contains("Location is optional", prompt);
         Assert.Contains("45 words", prompt);
         Assert.Contains("English translation", prompt);
-        Assert.Contains("customer's incoming payment descriptions", prompt);
-        Assert.Contains("not a diesel-fuel", prompt);
-        Assert.Contains("The tender's payment terms are not customer payment evidence", prompt);
+        Assert.Contains("incoming customer payment", prompt);
+        Assert.Contains("crop-production support", prompt);
+        Assert.Contains("the tender's payment terms are not evidence of customer sales", prompt);
         Assert.Contains("C-01", prompt);
         Assert.Contains("Bread supply payment", prompt);
         Assert.Contains("511680", prompt);
@@ -323,7 +323,7 @@ public class MatchingServiceTests
             new CustomerMatchEvidence("C-2", "71120", "Engineering consultancy", null, null, []), [],
             "Return every tender.");
         Assert.Contains("Mandatory matching rules", customized);
-        Assert.Contains("The tender's payment terms are not customer payment evidence", customized);
+        Assert.Contains("the tender's payment terms are not evidence of customer sales", customized);
     }
 
     [Fact]

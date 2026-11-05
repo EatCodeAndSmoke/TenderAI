@@ -66,7 +66,7 @@ namespace TenderAI.Api.Services
             });
         }
 
-        private static string Date(DateTime value) => value.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture);
+        private static string Date(DateTime value) => value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
         private static string? Number(decimal? value) => value?.ToString("G29", CultureInfo.InvariantCulture);
 

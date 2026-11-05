@@ -216,6 +216,7 @@ namespace TenderAI.Api.Controllers
         {
             customerId = NormalizeId(customerId);
             if (!await db.Customers.AnyAsync(c => c.CustomerId == customerId, ct)) return NotFound();
+            var now = DateTime.UtcNow.AddHours(5);
 
             var notifications = await db.Notifications
                 .AsNoTracking()
@@ -239,7 +240,7 @@ namespace TenderAI.Api.Controllers
                 .ToList();
             var tenders = (await db.Tenders
                 .AsNoTracking().Include(tender => tender.Products)
-                .Where(tender => tenderIds.Contains(tender.Id) && !tender.IsDeleted && (includeExpired || tender.EndDate >= DateTime.UtcNow.AddHours(5)))
+                .Where(tender => tenderIds.Contains(tender.Id) && !tender.IsDeleted)
                 .AsSplitQuery()
                 .ToListAsync(ct))
                 .ToDictionary(
@@ -250,7 +251,9 @@ namespace TenderAI.Api.Controllers
                 .Where(notification => tenders.ContainsKey(notification.LotId))
                 .GroupBy(notification => TenderIdentity.For(tenders[notification.LotId]) ?? $"lot:{notification.LotId}", StringComparer.Ordinal)
                 .Where(group => !group.Any(notification => feedback.GetValueOrDefault(notification.LotId) == "dislike"))
-                .Select(group => group.OrderByDescending(notification => applications.ContainsKey(notification.LotId))
+                .Where(group => includeExpired || group.Any(notification => tenders[notification.LotId].EndDate >= now))
+                .Select(group => group.OrderByDescending(notification => tenders[notification.LotId].EndDate >= now)
+                    .ThenByDescending(notification => applications.ContainsKey(notification.LotId))
                     .ThenByDescending(notification => feedback.GetValueOrDefault(notification.LotId) == "like")
                     .ThenByDescending(notification => notification.CreatedAt)
                     .ThenByDescending(notification => notification.Id).First())
