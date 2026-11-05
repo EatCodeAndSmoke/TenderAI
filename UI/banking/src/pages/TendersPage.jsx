@@ -6,6 +6,7 @@ import { prependMatch } from '../tenderResults.js';
 import { initialTenderProgress, tenderProgressMessage, updateTenderProgress } from '../tenderProgress.js';
 import { useSession } from '../session.jsx';
 import { BackIcon } from '../components/icons.jsx';
+import TenderApplicationDialog from '../components/TenderApplicationDialog.jsx';
 
 export default function TendersPage() {
   const { customerId, matchesLoading, rememberMatch, forgetMatch } = useSession();
@@ -18,6 +19,7 @@ export default function TendersPage() {
   const [progress, setProgress] = useState(null);
   const [searchFailed, setSearchFailed] = useState(false);
   const [error, setError] = useState('');
+  const [confirmation, setConfirmation] = useState(null);
   const abort = useRef(null);
   useEffect(() => () => abort.current?.abort(), []);
   useEffect(() => {
@@ -66,9 +68,11 @@ export default function TendersPage() {
     setActionBusy(item.tender.id); setError('');
     try {
       const application = await applyForTender(customerId, item.tender.id);
-      const match = { ...item.match, appliedAt: application.appliedAt };
+      const match = { ...item.match, appliedAt: application.appliedAt, offer: application.offer,
+        loanDecisionReason: application.loanDecisionReason };
       setResults(previous => previous.map(result => result.tender.id === item.tender.id ? { ...result, match } : result));
       rememberMatch(match);
+      setConfirmation({ tender: item.tender, match });
     } catch (err) { setError(err.message); }
     finally { setActionBusy(null); }
   }
@@ -102,12 +106,13 @@ export default function TendersPage() {
           <button type="button" aria-label={`Like ${t.englishTitle}`} aria-pressed={match.feedback === 'like'} disabled={actionBusy !== null} onClick={() => feedback(item, 'like')} className="rounded-lg border border-line px-3 py-2 text-sm aria-pressed:bg-brand-100 disabled:opacity-50">👍 {match.feedback === 'like' ? 'Liked' : 'Like'}</button>
           <button type="button" aria-label={`Dislike ${t.englishTitle}`} disabled={actionBusy !== null} onClick={() => feedback(item, 'dislike')} className="rounded-lg border border-line px-3 py-2 text-sm disabled:opacity-50">👎 Not for me</button>
           <button type="button" aria-label={`${match.appliedAt ? 'Applied for' : 'Apply for'} ${t.englishTitle}`}
-            disabled={actionBusy !== null || !!match.appliedAt || !item.isOpen} onClick={() => apply(item)}
+            disabled={actionBusy !== null || matchesLoading || !!match.appliedAt || !item.isOpen} onClick={() => apply(item)}
             className={`${BTN_PRIMARY} disabled:opacity-60`}>{match.appliedAt ? '✓ Applied' : item.isOpen ? 'Apply for me' : 'Tender closed'}</button>
           {t.sourceUrl && <a className="ml-auto text-sm font-medium text-brand-700 underline" href={t.sourceUrl} target="_blank" rel="noreferrer">View on UZEX ↗</a>}
         </div>
         {match.appliedAt && <p role="status" className="mt-3 rounded-lg bg-brand-50 p-3 text-sm text-brand-700">Your request is recorded for preparation. This is a demo; nothing has been submitted to UZEX.</p>}
       </article>;
     })}</div>
+    {confirmation && <TenderApplicationDialog {...confirmation} onClose={() => setConfirmation(null)} />}
   </section>;
 }

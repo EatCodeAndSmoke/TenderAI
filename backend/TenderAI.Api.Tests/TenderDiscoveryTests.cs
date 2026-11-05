@@ -199,6 +199,70 @@ public class TenderDiscoveryTests
         Assert.Empty(await db.TenderApplications.ToListAsync());
     }
 
+    [Theory]
+    [InlineData("UZS", 50_000_000L, 0L, 0, true)]
+    [InlineData("UZS", 49_999_999L, 0L, 0, false)]
+    [InlineData("UZS", 0L, 0L, 0, false)]
+    [InlineData("UZS", null, 0L, 0, false)]
+    [InlineData("UZS", 100_000_000L, 1L, 0, false)]
+    [InlineData("UZS", 100_000_000L, 0L, 1, false)]
+    [InlineData("USD", 100_000_000L, 0L, 0, false)]
+    public async Task ApplicationReturnsCurrentLoanEligibility(string currency, long? limit, long overdue, int overdueDays, bool eligible)
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        var customer = Customer("C-1");
+        customer.RiskFeatures!.PreApprovedLimit = 100_000_000;
+        var tender = Tender(1);
+        tender.StartPrice = 100_000_000;
+        db.Customers.Add(customer);
+        db.Tenders.Add(tender);
+        await db.SaveChangesAsync();
+        using var http = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
+        await foreach (var _ in Matcher(db).DiscoverAsync("C-1", 1, Importer(db, http), CancellationToken.None)) { }
+        var controller = new CustomersController(db);
+        Assert.NotNull(Assert.Single((await controller.GetDiscoveries("C-1", CancellationToken.None)).Value!).Match.Offer);
+
+        customer.RiskFeatures.PreApprovedLimit = limit;
+        customer.RiskFeatures.OverdueAmount = overdue;
+        customer.RiskFeatures.MaxOverdueDays12m = overdueDays;
+        tender.CurrencyCode = currency;
+        await db.SaveChangesAsync();
+        var application = (await controller.Apply("C-1", 1, CancellationToken.None)).Value!;
+
+        Assert.Equal(eligible, application.Offer is not null);
+        Assert.False(string.IsNullOrWhiteSpace(application.LoanDecisionReason));
+        if (eligible) Assert.Equal(limit, application.Offer!.Financing);
+        Assert.Single(await db.TenderApplications.ToListAsync());
+    }
+
+    [Fact]
+    public async Task ApplicationCanOfferFinancingWhenRiskBecomesEligibleAfterDiscovery()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        var customer = Customer("C-1");
+        customer.RiskFeatures!.PreApprovedLimit = null;
+        var tender = Tender(1);
+        tender.StartPrice = 100_000_000;
+        db.Customers.Add(customer);
+        db.Tenders.Add(tender);
+        await db.SaveChangesAsync();
+        using var http = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
+        await foreach (var _ in Matcher(db).DiscoverAsync("C-1", 1, Importer(db, http), CancellationToken.None)) { }
+        var controller = new CustomersController(db);
+        Assert.Null(Assert.Single((await controller.GetDiscoveries("C-1", CancellationToken.None)).Value!).Match.Offer);
+
+        customer.RiskFeatures.PreApprovedLimit = 50_000_000;
+        await db.SaveChangesAsync();
+        var application = (await controller.Apply("C-1", 1, CancellationToken.None)).Value!;
+        Assert.Equal(50_000_000L, application.Offer!.Financing);
+    }
+
     [Fact]
     public async Task ExistingDatabaseGetsApplicationTableWithoutLosingFeedback()
     {

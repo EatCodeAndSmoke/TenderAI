@@ -33,6 +33,10 @@ public class PromptSettingsTests
         Assert.Contains("crop-production support", TenderMatchPrompt.RequiredInstructions);
         Assert.Contains("diesel-fuel", TenderMatchPrompt.RequiredInstructions);
         Assert.Contains("untrusted data", TenderMatchPrompt.RequiredInstructions);
+        Assert.Contains("automatic weather station", TenderMatchPrompt.Instructions);
+        Assert.Contains("Computer sales alone do NOT support an automatic weather station tender", TenderMatchPrompt.RequiredInstructions);
+        Assert.Contains("120 words and 1200 characters", TenderMatchPrompt.Instructions);
+        Assert.Contains("120", TenderMatchPrompt.RequiredInstructions);
     }
 
     [Fact]
@@ -131,6 +135,7 @@ public class PromptSettingsTests
 
         Assert.Contains("CUSTOM MATCHING GUIDANCE", bedrock.Prompts[2]);
         Assert.Contains(TenderMatchPrompt.RequiredInstructions, bedrock.Prompts[2]);
+        Assert.Contains("If earlier guidance calls for a shorter or less detailed explanation", bedrock.Prompts[2]);
         Assert.Contains("Bread payment", bedrock.Prompts[2]);
         Assert.Contains("\"TenderId\":\"42\"", bedrock.Prompts[2]);
         Assert.DoesNotContain(TenderMatchPrompt.Instructions, bedrock.Prompts[2]);
@@ -138,6 +143,36 @@ public class PromptSettingsTests
         Assert.Contains(TenderSummaryPrompt.RequiredInstructions, bedrock.Prompts[3]);
         Assert.Contains("Bread supply", bedrock.Prompts[3]);
         Assert.DoesNotContain(TenderSummaryPrompt.Instructions, bedrock.Prompts[3]);
+    }
+
+    [Theory]
+    [InlineData(120, 0, true)]
+    [InlineData(121, 0, false)]
+    [InlineData(0, 1200, true)]
+    [InlineData(0, 1201, false)]
+    public async Task BedrockMatchingAcceptsAndRejectsExplanationLengthBoundaries(int words, int characters, bool accepted)
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var services = CreateServices(connection);
+        await using var scope = services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<TenderAiDbContext>();
+        await db.Database.EnsureCreatedAsync();
+        var reason = words > 0 ? string.Join(" ", Enumerable.Repeat("word", words)) : new string('x', characters);
+        using var bedrock = new CapturingBedrockClient
+        {
+            MatchingText = JsonSerializer.Serialize(new { matches = new[] { new { tenderId = "42", reason } } })
+        };
+        var evaluator = new BedrockTenderMatchEvaluator(bedrock, Options.Create(new BedrockOptions { ModelId = "test" }),
+            services.GetRequiredService<PromptSettings>(), NullLogger<BedrockTenderMatchEvaluator>.Instance);
+        var customer = new CustomerMatchEvidence("C-42", "10710", "Bakery", null, null,
+            [new IncomingPaymentEvidence(new DateOnly(2026, 1, 1), "Bread payment")]);
+        var tenders = new[] { new TenderMatchEvidence("42", "Bread supply", null, null, []) };
+
+        if (accepted)
+            Assert.Equal(reason, Assert.Single(await evaluator.EvaluateCustomerAsync(customer, tenders, CancellationToken.None)).Reason);
+        else
+            await Assert.ThrowsAsync<TenderMatchEvaluationException>(() => evaluator.EvaluateCustomerAsync(customer, tenders, CancellationToken.None));
     }
 
     private static ServiceProvider CreateServices(SqliteConnection connection) => new ServiceCollection()
@@ -161,6 +196,7 @@ public class PromptSettingsTests
         new AmazonBedrockRuntimeConfig { RegionEndpoint = RegionEndpoint.USEast1 })
     {
         public List<string> Prompts { get; } = [];
+        public string MatchingText { get; init; } = """{"matches":[]}""";
 
         public override async Task<InvokeModelResponse> InvokeModelAsync(InvokeModelRequest request, CancellationToken ct = default)
         {
@@ -170,7 +206,7 @@ public class PromptSettingsTests
             var prompt = json.RootElement.GetProperty("messages")[0].GetProperty("content")[0].GetProperty("text").GetString()!;
             Prompts.Add(prompt);
             var text = prompt.Contains("Customer and open tender evidence")
-                ? """{"matches":[]}"""
+                ? MatchingText
                 : """{"title":"Fresh bread","summary":"Fresh bread for schools."}""";
             var response = JsonSerializer.Serialize(new { output = new { message = new { content = new[] { new { text } } } } });
             return new InvokeModelResponse { Body = new MemoryStream(Encoding.UTF8.GetBytes(response)) };

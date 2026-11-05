@@ -390,7 +390,8 @@ public class MatchingServiceTests
         Assert.Contains("OKED code", prompt);
         Assert.Contains("incoming payment descriptions", prompt);
         Assert.Contains("Location is optional", prompt);
-        Assert.Contains("45 words", prompt);
+        Assert.Contains("120 words", prompt);
+        Assert.Contains("1200 characters", prompt);
         Assert.Contains("English translation", prompt);
         Assert.Contains("incoming customer payment", prompt);
         Assert.Contains("crop-production support", prompt);
@@ -424,12 +425,59 @@ public class MatchingServiceTests
             Assert.Contains("Use only the customer OKED/activity and incoming payments actually supplied", prompt);
             Assert.Contains("Never invent a payment", prompt);
             Assert.Contains("does NOT match school furniture or equipment", prompt);
-            Assert.Contains("quote a short relevant phrase verbatim from an actual supplied", prompt);
+            Assert.Contains("Computer sales alone do NOT support an automatic weather station tender", prompt);
+            Assert.Contains("3 to 5 sentences", prompt);
+            Assert.Contains("unprovided technical specifications", prompt);
+            Assert.Contains("quote a short relevant phrase verbatim from an actual supplied", prompt, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("Payment for crop harvesting services", prompt);
             Assert.Contains("Payment for field preparation services", prompt);
             Assert.Contains("Payment for agricultural supplies", prompt);
             Assert.Contains("School furniture and equipment", prompt);
         }
+    }
+
+    [Fact]
+    public async Task DetailedMatchExplanationSurvivesPersistence()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(CreateCustomer("C-01", 100_000_000));
+        db.Tenders.Add(CreateTender());
+        await db.SaveChangesAsync();
+        const string reason = "The buyer is purchasing fresh bread for school kitchens. "
+            + "The customer's registered activity is bread manufacturing, which is directly related to the goods requested. "
+            + "An incoming payment describes a \"Bread delivery payment\", showing a prior sale in the same product category. "
+            + "This makes the opportunity relevant to the customer's existing business, although the available information "
+            + "does not establish that every technical requirement has been met.";
+        Assert.True(reason.Length > 400);
+        Assert.True(reason.Split(' ').Length > 45);
+
+        var events = await CollectEvents(CreateService(db, new FakeMatchEvaluator([new TenderCandidateMatch("511680", reason)])));
+        Assert.Equal(reason, Assert.Single(Assert.Single(events, e => e.Type == "customer-completed").Matches!).MatchReason);
+        db.ChangeTracker.Clear();
+        var saved = await db.Notifications.AsNoTracking().SingleAsync();
+        Assert.Equal(reason, saved.MatchReason);
+        Assert.Equal(reason, saved.WhyText);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task OverlongMatchExplanationIsRejectedBeforePersistence(bool exceedWords)
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(CreateCustomer("C-01", 100_000_000));
+        db.Tenders.Add(CreateTender());
+        await db.SaveChangesAsync();
+        var reason = exceedWords ? string.Join(" ", Enumerable.Repeat("word", 121)) : new string('x', 1201);
+        var events = await CollectEvents(CreateService(db, new FakeMatchEvaluator([new TenderCandidateMatch("511680", reason)])));
+        Assert.Contains(events, e => e.Type == "customer-error");
+        Assert.Empty(await db.Notifications.ToListAsync());
     }
 
     [Fact]
