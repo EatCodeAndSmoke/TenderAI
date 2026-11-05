@@ -101,7 +101,7 @@ export default function TendersPage() {
         <div className="flex flex-wrap justify-between gap-2 text-xs text-muted"><span>UZEX · {t.displayNo}</span><span>{item.isOpen ? 'Closes' : 'Closed'} {new Date(t.endDate).toLocaleDateString('en-GB')}</span></div>
         <h2 className="mt-2 text-lg font-semibold">{t.englishTitle}</h2><p className="mt-2 text-sm leading-relaxed text-ink/80">{t.summary}</p>
         <div className="mt-4 flex flex-wrap gap-3 text-sm"><span className="rounded-lg bg-subtle px-3 py-2"><span className="text-muted">Budget </span><strong>{money(t.startPrice)} {t.currencyCode}</strong></span>{t.depositAmount != null && <span className="rounded-lg bg-subtle px-3 py-2"><span className="text-muted">Deposit </span><strong>{money(t.depositAmount)} {t.currencyCode}</strong></span>}</div>
-        <div className="mt-4 rounded-xl bg-brand-50 p-4"><p className="text-sm font-semibold text-brand-700">✦ Why this is for you</p><p className="mt-1 text-sm">{match.matchReason}</p><p className="mt-3 text-sm text-muted">{match.loanDecisionReason}</p>{item.isOpen && match.offer && <Link className={`${BTN_PRIMARY} mt-3`} to={`/loan/${match.lotId}`}>Explore financing</Link>}</div>
+        <TenderMatchExplanation match={match} isOpen={item.isOpen} />
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <button type="button" aria-label={`Like ${t.englishTitle}`} aria-pressed={match.feedback === 'like'} disabled={actionBusy !== null} onClick={() => feedback(item, 'like')} className="rounded-lg border border-line px-3 py-2 text-sm aria-pressed:bg-brand-100 disabled:opacity-50">👍 {match.feedback === 'like' ? 'Liked' : 'Like'}</button>
           <button type="button" aria-label={`Dislike ${t.englishTitle}`} disabled={actionBusy !== null} onClick={() => feedback(item, 'dislike')} className="rounded-lg border border-line px-3 py-2 text-sm disabled:opacity-50">👎 Not for me</button>
@@ -115,4 +115,12 @@ export default function TendersPage() {
     })}</div>
     {confirmation && <TenderApplicationDialog {...confirmation} onClose={() => setConfirmation(null)} />}
   </section>;
+}
+
+export function TenderMatchExplanation({ match, isOpen }) {
+  return <div className="mt-4 rounded-xl bg-brand-50 p-4">
+    <p className="text-sm font-semibold text-brand-700">✦ Why this is for you</p>
+    <p className="mt-1 text-sm">{match.matchReason}</p>
+    {isOpen && match.offer && <Link className={`${BTN_PRIMARY} mt-3`} to={`/loan/${match.lotId}`}>Explore financing</Link>}
+  </div>;
 }
