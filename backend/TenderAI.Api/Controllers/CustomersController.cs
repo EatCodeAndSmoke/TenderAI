@@ -229,7 +229,6 @@ namespace TenderAI.Api.Controllers
                 .Where(a => a.CustomerId == customerId).ToListAsync(ct))
                 .ToDictionary(a => a.TenderId.ToString(CultureInfo.InvariantCulture),
                     a => DateTime.SpecifyKind(a.AppliedAt, DateTimeKind.Utc));
-            notifications = notifications.Where(n => feedback.GetValueOrDefault(n.LotId) != "dislike").ToList();
             var tenderIds = notifications
                 .Select(notification => long.TryParse(notification.LotId, NumberStyles.None, CultureInfo.InvariantCulture, out var id)
                     ? (long?)id
@@ -238,18 +237,25 @@ namespace TenderAI.Api.Controllers
                 .Select(id => id.GetValueOrDefault())
                 .Distinct()
                 .ToList();
-            var tenderSummaries = (await db.Tenders
-                .AsNoTracking()
+            var tenders = (await db.Tenders
+                .AsNoTracking().Include(tender => tender.Products)
                 .Where(tender => tenderIds.Contains(tender.Id) && !tender.IsDeleted && (includeExpired || tender.EndDate >= DateTime.UtcNow.AddHours(5)))
-                .Select(tender => new { tender.Id, Title = tender.EnglishTitle ?? tender.Summary })
+                .AsSplitQuery()
                 .ToListAsync(ct))
                 .ToDictionary(
                     tender => tender.Id.ToString(CultureInfo.InvariantCulture),
-                    tender => tender.Title);
+                    tender => tender);
 
             return notifications
-                .Where(notification => tenderSummaries.ContainsKey(notification.LotId))
-                .Select(notification => notification.ToDto(tenderSummaries.GetValueOrDefault(notification.LotId)) with
+                .Where(notification => tenders.ContainsKey(notification.LotId))
+                .GroupBy(notification => TenderIdentity.For(tenders[notification.LotId]) ?? $"lot:{notification.LotId}", StringComparer.Ordinal)
+                .Where(group => !group.Any(notification => feedback.GetValueOrDefault(notification.LotId) == "dislike"))
+                .Select(group => group.OrderByDescending(notification => applications.ContainsKey(notification.LotId))
+                    .ThenByDescending(notification => feedback.GetValueOrDefault(notification.LotId) == "like")
+                    .ThenByDescending(notification => notification.CreatedAt)
+                    .ThenByDescending(notification => notification.Id).First())
+                .OrderByDescending(notification => notification.CreatedAt).ThenByDescending(notification => notification.Id)
+                .Select(notification => notification.ToDto(tenders[notification.LotId].EnglishTitle ?? tenders[notification.LotId].Summary) with
                 {
                     Feedback = feedback.GetValueOrDefault(notification.LotId),
                     AppliedAt = applications.TryGetValue(notification.LotId, out var appliedAt) ? appliedAt : null

@@ -121,6 +121,9 @@ public class TenderDiscoveryTests
         body.Position = 0;
         var payload = await new StreamReader(body, Encoding.UTF8).ReadToEndAsync();
         Assert.Equal(3, payload.Split("\"type\":\"match\"", StringSplitOptions.None).Length - 1);
+        Assert.Contains("\"phase\":\"loading\"", payload);
+        Assert.Contains("\"phase\":\"matching\"", payload);
+        Assert.Contains("\"checked\":", payload);
         Assert.True(handler.ListCalls > 0);
     }
 
@@ -347,13 +350,84 @@ public class TenderDiscoveryTests
         var completed = Assert.Single(events, e => e.Type == "completed");
         Assert.True(completed.Limited);
         Assert.Equal(50, completed.Imported);
+        Assert.Equal(50, completed.Checked);
         Assert.Equal(0, completed.Count);
         Assert.Equal(50, await db.Tenders.CountAsync());
         db.ChangeTracker.Clear();
         var next = new List<TenderDiscoveryEvent>();
         await foreach (var item in matcher.DiscoverAsync("C-1", 1, Importer(db, http), CancellationToken.None)) next.Add(item);
         Assert.Equal(10, next.Single(e => e.Type == "completed").Imported);
+        Assert.Equal(10, next.Single(e => e.Type == "completed").Checked);
         Assert.Equal(60, await db.TenderDiscoverySeen.CountAsync());
+    }
+
+    [Fact]
+    public async Task DiscoveryStreamsProgressAndSuppressesDuplicatesWithMatchingBuyerProductAndTerms()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options;
+        await using var db = new TenderAiDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        var one = Tender(1);
+        var duplicate = Tender(2);
+        duplicate.EndDate = one.EndDate;
+        duplicate.StartPrice = one.StartPrice;
+        duplicate.BuyerName = " BUYER ";
+        one.Products.Add(new TenderProductEntity { ProductName = "Bread", Quantity = 10, Unit = "kg", OrderNum = 1 });
+        duplicate.Products.Add(new TenderProductEntity { ProductName = " bread ", Quantity = 10, Unit = "KG", OrderNum = 1 });
+        var differentQuantity = Tender(3);
+        differentQuantity.EndDate = one.EndDate;
+        differentQuantity.StartPrice = one.StartPrice;
+        differentQuantity.Products.Add(new TenderProductEntity { ProductName = "Bread", Quantity = 20, Unit = "kg", OrderNum = 1 });
+        var differentPrice = Tender(4);
+        differentPrice.EndDate = one.EndDate;
+        differentPrice.Products.Add(new TenderProductEntity { ProductName = "Bread", Quantity = 10, Unit = "kg", OrderNum = 1 });
+        db.Tenders.AddRange(one, duplicate, differentQuantity, differentPrice);
+        await db.SaveChangesAsync();
+        using var http = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
+        var events = new List<TenderDiscoveryEvent>();
+        await foreach (var item in Matcher(db).DiscoverAsync("C-1", 3, Importer(db, http), CancellationToken.None)) events.Add(item);
+        Assert.Equal(new long[] { 1, 3, 4 }, events.Where(e => e.Type == "match").Select(e => e.Tender!.Id));
+        Assert.Contains(events, e => e.Type == "progress" && e.Phase == "matching" && e.Checked == 4 && e.Count == 0);
+        Assert.Equal(4, events.Single(e => e.Type == "completed").Checked);
+        Assert.Equal(4, await db.TenderDiscoverySeen.CountAsync());
+        Assert.Equal(3, (await new CustomersController(db).GetDiscoveries("C-1", CancellationToken.None)).Value!.Count());
+    }
+
+    [Fact]
+    public async Task ExistingDuplicateMatchesAreCollapsedAndDislikeHidesAllCopies()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options;
+        await using var db = new TenderAiDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        var one = Tender(1);
+        var duplicate = Tender(2);
+        duplicate.StartPrice = one.StartPrice;
+        duplicate.EndDate = one.EndDate;
+        db.Tenders.AddRange(one, duplicate);
+        await db.SaveChangesAsync();
+        await foreach (var _ in Matcher(db).RunStreamingAsync(CancellationToken.None, "C-1")) { }
+        Assert.Equal(2, await db.Notifications.CountAsync());
+        var controller = new CustomersController(db);
+        var shown = Assert.Single((await controller.GetDiscoveries("C-1", CancellationToken.None)).Value!);
+        Assert.Single((await controller.GetMatches("C-1", CancellationToken.None)).Value!);
+        await controller.SetFeedback("C-1", shown.Tender.Id, new TenderFeedbackRequest("dislike"), CancellationToken.None);
+        Assert.Empty((await controller.GetDiscoveries("C-1", CancellationToken.None)).Value!);
+        var third = Tender(3);
+        third.StartPrice = one.StartPrice;
+        third.EndDate = one.EndDate;
+        db.Tenders.Add(third);
+        await db.SaveChangesAsync();
+        using var http = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
+        var events = new List<TenderDiscoveryEvent>();
+        await foreach (var item in Matcher(db).DiscoverAsync("C-1", 1, Importer(db, http), CancellationToken.None)) events.Add(item);
+        Assert.DoesNotContain(events, e => e.Type == "match");
+        Assert.Empty((await controller.GetDiscoveries("C-1", CancellationToken.None)).Value!);
     }
 
     [Fact]
@@ -558,7 +632,7 @@ public class TenderDiscoveryTests
         Id = id, DisplayNo = id.ToString(), Source = "UZEX", SourceUrl = "https://uzex.test/",
         Name = "Bread supply", EnglishTitle = "Bread supply", Summary = "Supply bread.",
         SummaryVersion = TenderSummaryService.CurrentSummaryVersion, BuyerName = "Buyer",
-        CurrencyCode = "UZS", StartPrice = 100, EndDate = DateTime.UtcNow.AddDays(10)
+        CurrencyCode = "UZS", StartPrice = 100 + id, EndDate = DateTime.UtcNow.AddDays(10)
     };
 
     private static MatchingService Matcher(TenderAiDbContext db) =>
@@ -625,7 +699,7 @@ public class TenderDiscoveryTests
                 var rows = Enumerable.Range(1, count).Select(i => new
                 {
                     id = i, total_count = count, display_no = $"LOT-{i}", name = "Bread supply",
-                    end_date = DateTime.UtcNow.AddDays(10), cost = 100, currency_codeabc = "UZS"
+                    end_date = DateTime.UtcNow.AddDays(10), cost = 100 + i, currency_codeabc = "UZS"
                 });
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(rows) });
             }
