@@ -58,6 +58,9 @@ function PromptEditor({ initial, onToast }) {
       <summary className="cursor-pointer font-medium">Required instructions added by the application</summary>
       <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-subtle p-3 font-mono text-xs leading-relaxed text-muted">{saved.requiredInstructions}</pre>
     </details>
+    {saved.key === 'matching' && saved.instructions !== saved.defaultInstructions && <p className="mt-3 text-xs text-muted">
+      A custom matching prompt is saved. To use the latest recommended instructions, select Restore default and save.
+    </p>}
     {!valid && <p role="alert" className="mt-2 text-sm text-red-700">Instructions cannot be empty.</p>}
     {error && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
     <div className="mt-4 flex flex-wrap gap-3">

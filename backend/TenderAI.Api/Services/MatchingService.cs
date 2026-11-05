@@ -51,12 +51,18 @@ namespace TenderAI.Api.Services
                     .Select(n => n.LotId).ToListAsync(ct);
                 foreach (var lot in savedLots)
                     if (long.TryParse(lot, NumberStyles.None, CultureInfo.InvariantCulture, out var id)) seen.Add(id);
+                var savedIds = savedLots.Select(lot => long.TryParse(lot, NumberStyles.None, CultureInfo.InvariantCulture, out var id) ? (long?)id : null)
+                    .OfType<long>().Distinct().ToList();
+                var savedTenders = await db.Tenders.AsNoTracking().Include(t => t.Products)
+                    .Where(t => savedIds.Contains(t.Id) && !t.IsDeleted).ToListAsync(ct);
+                var savedIdentities = savedTenders.Select(TenderIdentity.For).OfType<string>().ToHashSet(StringComparer.Ordinal);
                 var stored = await db.Tenders.AsNoTracking().Include(t => t.Products)
                     .Where(t => !t.IsDeleted && t.EndDate >= now)
                     .OrderBy(t => t.EndDate).ThenBy(t => t.Id).ToListAsync(ct);
                 var candidates = stored.Where(t => !seen.Contains(t.Id) && feedback.GetValueOrDefault(t.Id) != "dislike").ToList();
                 var matchedCount = 0;
                 var importedCount = 0;
+                var checkedCount = 0;
                 var limited = false;
                 yield return new TenderDiscoveryEvent("started", Count: count);
                 if (!customer.Payments.Any(p => p.IsIncoming && p.Date >= today.AddMonths(-12)
@@ -71,25 +77,38 @@ namespace TenderAI.Api.Services
                     if (candidates.Count == 0)
                     {
                         if (importedCount >= MaxImportedPerSearch) { limited = true; break; }
-                        var loaded = await importer.LoadNewAsync(Math.Min(DiscoveryBatchSize, MaxImportedPerSearch - importedCount), ct);
-                        if (loaded.Count == 0) break;
-                        importedCount += loaded.Count;
-                        candidates.AddRange(loaded.Where(t => !t.IsDeleted && t.EndDate >= now
-                            && !seen.Contains(t.Id) && feedback.GetValueOrDefault(t.Id) != "dislike"));
+                        yield return new TenderDiscoveryEvent("progress", matchedCount, Imported: importedCount, Checked: checkedCount, Phase: "loading");
+                        var loadedCount = 0;
+                        await foreach (var tender in importer.LoadNewStreamingAsync(Math.Min(DiscoveryBatchSize, MaxImportedPerSearch - importedCount), ct))
+                        {
+                            loadedCount++;
+                            importedCount++;
+                            if (!tender.IsDeleted && tender.EndDate >= now && !seen.Contains(tender.Id)
+                                && feedback.GetValueOrDefault(tender.Id) != "dislike")
+                                candidates.Add(tender);
+                            yield return new TenderDiscoveryEvent("progress", matchedCount, Imported: importedCount, Checked: checkedCount, Phase: "loading");
+                        }
+                        if (loadedCount == 0) break;
                         if (candidates.Count == 0) continue;
                     }
                     var batch = candidates.Take(DiscoveryBatchSize).ToList();
                     candidates.RemoveRange(0, batch.Count);
+                    yield return new TenderDiscoveryEvent("progress", matchedCount, Imported: importedCount, Checked: checkedCount, Phase: "matching");
                     var evaluation = await EvaluateCustomerAsync(customer, batch.Select(ToTenderEvidence).ToList(),
                         today.AddMonths(-12), today, semaphore, ct);
                     if (evaluation.Error is not null)
                         throw new TenderMatchEvaluationException("The tender search could not be completed.", evaluation.Error);
+                    checkedCount += batch.Count;
+                    yield return new TenderDiscoveryEvent("progress", matchedCount, Imported: importedCount, Checked: checkedCount, Phase: "matching");
                     var matches = evaluation.Matches!.ToDictionary(match => match.TenderId, StringComparer.Ordinal);
                     foreach (var tender in batch)
                     {
                         matches.TryGetValue(tender.Id.ToString(CultureInfo.InvariantCulture), out var match);
+                        var identity = TenderIdentity.For(tender);
+                        if (identity is not null && savedIdentities.Contains(identity)) match = null;
                         if (match is not null && (string.IsNullOrWhiteSpace(tender.Summary) || string.IsNullOrWhiteSpace(tender.EnglishTitle)))
                         {
+                            yield return new TenderDiscoveryEvent("progress", matchedCount, Imported: importedCount, Checked: checkedCount, Phase: "summarizing");
                             await importer.RefreshSummaryAsync(tender, ct);
                             if (string.IsNullOrWhiteSpace(tender.Summary) || string.IsNullOrWhiteSpace(tender.EnglishTitle))
                                 throw new TenderMatchEvaluationException("A matching tender could not be summarized. Check the Bedrock configuration.");
@@ -119,18 +138,19 @@ namespace TenderAI.Api.Services
                             db.Entry(marker).State = EntityState.Detached;
                         }
                         if (notification is null) continue;
+                        if (identity is not null) savedIdentities.Add(identity);
                         matchedCount++;
                         yield return new TenderDiscoveryEvent("match", matchedCount,
                             tender.ToDto(), notification.ToDto(tender.EnglishTitle) with
                             {
                                 Feedback = currentFeedback,
                                 AppliedAt = appliedAt.HasValue ? DateTime.SpecifyKind(appliedAt.Value, DateTimeKind.Utc) : null
-                            });
+                            }, Imported: importedCount, Checked: checkedCount);
                         if (matchedCount == count) break;
                     }
-                    yield return new TenderDiscoveryEvent("progress", matchedCount, Imported: importedCount);
+                    yield return new TenderDiscoveryEvent("progress", matchedCount, Imported: importedCount, Checked: checkedCount, Phase: "matching");
                 }
-                yield return new TenderDiscoveryEvent("completed", matchedCount, Imported: importedCount, Limited: limited);
+                yield return new TenderDiscoveryEvent("completed", matchedCount, Imported: importedCount, Limited: limited, Checked: checkedCount);
             }
         }
 
@@ -537,5 +557,5 @@ namespace TenderAI.Api.Services
 
     public sealed record TenderDiscoveryEvent(
         string Type, int Count = 0, TenderDto? Tender = null, NotificationDto? Match = null,
-        int Imported = 0, bool Limited = false);
+        int Imported = 0, bool Limited = false, int Checked = 0, string? Phase = null);
 }

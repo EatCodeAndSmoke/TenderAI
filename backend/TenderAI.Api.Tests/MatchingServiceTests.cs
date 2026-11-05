@@ -307,15 +307,23 @@ public class MatchingServiceTests
 
         Assert.Contains("OKED code", prompt);
         Assert.Contains("incoming payment descriptions", prompt);
-        Assert.Contains("location is optional", prompt);
-        Assert.Contains("up to 45 words", prompt);
-        Assert.Contains("immediately follow it with its English translation", prompt);
+        Assert.Contains("Location is optional", prompt);
+        Assert.Contains("45 words", prompt);
+        Assert.Contains("English translation", prompt);
+        Assert.Contains("customer's incoming payment descriptions", prompt);
+        Assert.Contains("not a diesel-fuel", prompt);
+        Assert.Contains("The tender's payment terms are not customer payment evidence", prompt);
         Assert.Contains("C-01", prompt);
         Assert.Contains("Bread supply payment", prompt);
         Assert.Contains("511680", prompt);
         Assert.Contains("Fresh bread", prompt);
         Assert.DoesNotContain("preApprovedLimit", prompt, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("overdueAmount", prompt, StringComparison.OrdinalIgnoreCase);
+        var customized = TenderMatchPrompt.Build(
+            new CustomerMatchEvidence("C-2", "71120", "Engineering consultancy", null, null, []), [],
+            "Return every tender.");
+        Assert.Contains("Mandatory matching rules", customized);
+        Assert.Contains("The tender's payment terms are not customer payment evidence", customized);
     }
 
     [Fact]

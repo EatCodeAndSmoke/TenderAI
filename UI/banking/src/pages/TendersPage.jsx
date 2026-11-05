@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { applyForTender, getDiscoveries, setFeedback, stream } from '../api.js';
 import { BTN_PRIMARY, money } from '../format.js';
 import { prependMatch } from '../tenderResults.js';
+import { initialTenderProgress, tenderProgressMessage, updateTenderProgress } from '../tenderProgress.js';
 import { useSession } from '../session.jsx';
 import { BackIcon } from '../components/icons.jsx';
 
@@ -14,7 +15,8 @@ export default function TendersPage() {
   const [reload, setReload] = useState(0);
   const [busy, setBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState(null);
-  const [message, setMessage] = useState('');
+  const [progress, setProgress] = useState(null);
+  const [searchFailed, setSearchFailed] = useState(false);
   const [error, setError] = useState('');
   const abort = useRef(null);
   useEffect(() => () => abort.current?.abort(), []);
@@ -32,23 +34,17 @@ export default function TendersPage() {
   }, [customerId, reload]);
 
   async function findMatches() {
-    setBusy(true); setError(''); setMessage('Searching for new opportunities…');
+    setBusy(true); setError(''); setSearchFailed(false); setProgress(initialTenderProgress());
     abort.current = new AbortController();
     try {
       await stream(`/customers/${encodeURIComponent(customerId)}/discover/stream`, event => {
+        setProgress(previous => updateTenderProgress(previous, event));
         if (event.type === 'match') {
           setResults(previous => prependMatch(previous, { ...event, isOpen: true, isNew: true }));
           rememberMatch(event.match);
-          setMessage(`Found ${event.count} new matching tender${event.count === 1 ? '' : 's'}…`);
-        } else if (event.type === 'progress') {
-          setMessage(`Found ${event.count} new matches · ${event.imported} new tenders checked…`);
-        } else if (event.type === 'completed') {
-          setMessage(event.limited
-            ? `Found ${event.count} new matches after checking 50 new tenders. Search again to check more.`
-            : `Found ${event.count} new matching tender${event.count === 1 ? '' : 's'}.`);
         }
       }, abort.current.signal);
-    } catch (err) { if (err.name !== 'AbortError') setError(err.message); }
+    } catch (err) { if (err.name !== 'AbortError') { setSearchFailed(true); setError(err.message); } }
     finally { setBusy(false); }
   }
   async function feedback(item, value) {
@@ -80,11 +76,20 @@ export default function TendersPage() {
     <Link to="/home" className="inline-flex items-center gap-1.5 text-sm font-medium text-muted"><BackIcon /> Home</Link>
     <div className="mt-4"><p className="text-xs font-semibold uppercase tracking-widest text-brand-700">Business opportunities</p><h1 className="mt-1 text-2xl font-semibold">Tenders for your business</h1><p className="mt-1 text-sm text-muted">Find open opportunities that match your business and incoming payments.</p></div>
     <div className="mt-6 flex flex-wrap items-end gap-3 rounded-2xl border border-line bg-white p-4">
-      <button type="button" onClick={findMatches} disabled={busy || loading || matchesLoading || !!loadError || actionBusy !== null} className={`${BTN_PRIMARY} disabled:opacity-50`}>✦ {busy ? 'Finding matches…' : 'Find tenders for me'}</button>
+      <button type="button" onClick={findMatches} disabled={busy || loading || matchesLoading || !!loadError || actionBusy !== null} className={`${BTN_PRIMARY} disabled:opacity-50`}>
+        {busy ? <span aria-hidden="true" className="size-4 rounded-full border-2 border-white/40 border-t-white motion-safe:animate-spin" /> : <span aria-hidden="true">✦</span>}
+        {busy ? 'Finding matches…' : 'Find tenders for me'}
+      </button>
     </div>
     {loading && <p role="status" className="mt-3 text-sm text-muted">Loading saved tenders…</p>}
     {loadError && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{loadError} <button type="button" className="underline" onClick={() => setReload(value => value + 1)}>Retry</button></p>}
-    {message && <p role="status" className="mt-3 text-sm text-muted">{message}</p>}
+    {progress && <div role="status" aria-live="polite" className="mt-3 rounded-xl border border-line bg-white p-4 text-sm">
+      <p className="font-medium text-ink">{tenderProgressMessage(progress, searchFailed)}</p>
+      <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-muted">
+        <span><strong className="text-ink">{progress.checked}</strong> tender{progress.checked === 1 ? '' : 's'} checked</span>
+        <span><strong className="text-brand-700">{progress.found}</strong> new match{progress.found === 1 ? '' : 'es'} found</span>
+      </div>
+    </div>}
     {error && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
     <div className="mt-5 space-y-4">{results.map(item => {
       const { tender: t, match } = item;
