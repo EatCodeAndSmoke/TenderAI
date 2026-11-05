@@ -22,7 +22,7 @@ test('similar lots share one ranked group without losing their individual state'
 });
 
 test('fit categories use the requested boundaries without inventing legacy scores', () => {
-  for (const [score, label] of [[75, 'Might interest you'], [84, 'Might interest you'], [85, 'Best match'], [100, 'Best match']]) {
+  for (const [score, label] of [[75, 'Might interest you'], [84, 'Might interest you'], [85, 'Might interest you'], [86, 'Best match'], [100, 'Best match']]) {
     assert.equal(matchCategory({ matchScore: score }).label, label);
   }
   for (const score of [1, 69, 70, 74]) assert.equal(matchCategory({ matchScore: score }), null);
@@ -35,12 +35,13 @@ test('fit categories use the requested boundaries without inventing legacy score
 test('saved and streamed matches exclude unscored and low fits and order the rest stably', () => {
   const result = (id, score) => ({ tender: { id }, match: { matchScore: score } });
   const low = result(1, 74), high = result(2, 92), same = result(3, 92), legacy = result(4, null), middle = result(5, 75);
-  const saved = [low, high, same, legacy, middle];
-  assert.deepEqual(sortTenderResults(saved), [high, same, middle]);
-  assert.deepEqual(saved, [low, high, same, legacy, middle]);
+  const boundary = result(7, 85), bestBoundary = result(8, 86);
+  const saved = [low, high, same, legacy, middle, boundary, bestBoundary];
+  assert.deepEqual(sortTenderResults(saved), [high, same, bestBoundary, boundary, middle]);
+  assert.deepEqual(saved, [low, high, same, legacy, middle, boundary, bestBoundary]);
   const added = result(6, 84);
-  assert.deepEqual(prependMatch(sortTenderResults(saved), added), [high, same, added, middle]);
-  assert.deepEqual(prependMatch(sortTenderResults(saved), low), [high, same, middle]);
+  assert.deepEqual(prependMatch(sortTenderResults(saved), added), [high, same, bestBoundary, boundary, added, middle]);
+  assert.deepEqual(prependMatch(sortTenderResults(saved), low), [high, same, bestBoundary, boundary, middle]);
   const updated = result(1, 100);
-  assert.deepEqual(prependMatch(saved, updated), [updated, high, same, middle]);
+  assert.deepEqual(prependMatch(saved, updated), [updated, high, same, bestBoundary, boundary, middle]);
 });

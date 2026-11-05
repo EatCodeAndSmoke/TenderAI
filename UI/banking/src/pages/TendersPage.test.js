@@ -43,7 +43,8 @@ test('fit badge shows only the two qualifying AI fit categories', async () => {
     assert.match(render(92), /Best match.*92\/100 AI fit/);
     assert.match(render(75), /Might interest you.*75\/100 AI fit/);
     assert.match(render(84), /Might interest you.*84\/100 AI fit/);
-    assert.match(render(85), /Best match.*85\/100 AI fit/);
+    assert.match(render(85), /Might interest you.*85\/100 AI fit/);
+    assert.match(render(86), /Best match.*86\/100 AI fit/);
     assert.equal(render(74), '');
     assert.equal(render(null), '');
   } finally {

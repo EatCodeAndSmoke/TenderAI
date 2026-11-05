@@ -6,7 +6,7 @@ export function matchScore(match) {
 export function matchCategory(match) {
   const score = matchScore(match);
   if (score === null || score < 75) return null;
-  if (score >= 85) return { label: 'Best match', tone: 'best' };
+  if (score > 85) return { label: 'Best match', tone: 'best' };
   return { label: 'Might interest you', tone: 'explore' };
 }
 

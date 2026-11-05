@@ -40,8 +40,11 @@ public class PromptSettingsTests
         Assert.Contains("\"matchScore\"", TenderMatchPrompt.Instructions);
         Assert.Contains("\"matchScore\"", TenderMatchPrompt.RequiredInstructions);
         Assert.Contains("not measured", TenderMatchPrompt.RequiredInstructions);
-        Assert.Contains("85-100", TenderMatchPrompt.RequiredInstructions);
-        Assert.Contains("75-84", TenderMatchPrompt.RequiredInstructions);
+        Assert.Contains("86-100", TenderMatchPrompt.Instructions);
+        Assert.Contains("75-85", TenderMatchPrompt.Instructions);
+        Assert.Contains("86-100", TenderMatchPrompt.RequiredInstructions);
+        Assert.Contains("75-85", TenderMatchPrompt.RequiredInstructions);
+        Assert.Contains("If earlier guidance specifies different score categories or ranges, use these ranges instead", TenderMatchPrompt.RequiredInstructions);
         Assert.Contains("omit tenders scored below 75", TenderMatchPrompt.RequiredInstructions);
     }
 
