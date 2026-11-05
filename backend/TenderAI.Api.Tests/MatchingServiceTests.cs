@@ -88,7 +88,7 @@ public class MatchingServiceTests
         Assert.Equal(80_000_000L, match.Offer?.Financing);
         Assert.Equal(3_000_000L, match.Offer?.Guarantee);
         Assert.Equal(80_000_000L, match.Offer?.PreApprovedLimit);
-        Assert.Contains("at least 80%", match.LoanDecisionReason);
+        Assert.Contains("at least 50%", match.LoanDecisionReason);
         Assert.Equal(1, evaluator.Calls);
         Assert.Equal("C-01", evaluator.LastCustomer?.CustomerId);
         Assert.Equal("10710", evaluator.LastCustomer?.IndustryCode);
@@ -100,7 +100,7 @@ public class MatchingServiceTests
     }
 
     [Fact]
-    public async Task RunOnlyOffersLoanWhenLimitCoversEightyPercentAndNoArrearsWereRecorded()
+    public async Task RunOnlyOffersLoanWhenLimitCoversFiftyPercentAndNoArrearsWereRecorded()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
@@ -110,11 +110,14 @@ public class MatchingServiceTests
         await using var db = new TenderAiDbContext(options);
         await db.Database.EnsureCreatedAsync();
 
-        var eligible = CreateCustomer("C-01", preApprovedLimit: 80_000_000);
-        var insufficientLimit = CreateCustomer("C-02", preApprovedLimit: 79_999_999);
+        var eligible = CreateCustomer("C-01", preApprovedLimit: 50_000_000);
+        var insufficientLimit = CreateCustomer("C-02", preApprovedLimit: 49_999_999);
         var overdueBalance = CreateCustomer("C-03", preApprovedLimit: 100_000_000, overdueAmount: 1);
         var overdueHistory = CreateCustomer("C-04", preApprovedLimit: 100_000_000, overdueDays: 1);
-        db.Customers.AddRange(eligible, insufficientLimit, overdueBalance, overdueHistory);
+        var aboveThreshold = CreateCustomer("C-05", preApprovedLimit: 79_999_999);
+        var noLimit = CreateCustomer("C-06", preApprovedLimit: null);
+        var zeroLimit = CreateCustomer("C-07", preApprovedLimit: 0);
+        db.Customers.AddRange(eligible, insufficientLimit, overdueBalance, overdueHistory, aboveThreshold, noLimit, zeroLimit);
         db.Tenders.Add(CreateTender());
         await db.SaveChangesAsync();
 
@@ -124,14 +127,93 @@ public class MatchingServiceTests
         var results = events.Where(runEvent => runEvent.Type == "customer-completed").ToList();
         var matches = results.SelectMany(runEvent => runEvent.Matches!).ToList();
 
-        Assert.Equal(4, evaluator.Calls);
+        Assert.Equal(7, evaluator.Calls);
         Assert.Single(matches, match => match.CustomerId == "C-01" && match.Offer is not null);
+        Assert.Equal(50_000_000L, matches.Single(match => match.CustomerId == "C-01").Offer!.Financing);
         Assert.Single(matches, match => match.CustomerId == "C-02" && match.Offer is null
-            && match.LoanDecisionReason.Contains("below 80%", StringComparison.Ordinal));
+            && match.LoanDecisionReason.Contains("below 50%", StringComparison.Ordinal));
         Assert.Single(matches, match => match.CustomerId == "C-03" && match.Offer is null
             && match.LoanDecisionReason.Contains("arrears", StringComparison.Ordinal));
         Assert.Single(matches, match => match.CustomerId == "C-04" && match.Offer is null
             && match.LoanDecisionReason.Contains("arrears", StringComparison.Ordinal));
+        Assert.Equal(79_999_999L, matches.Single(match => match.CustomerId == "C-05").Offer!.Financing);
+        Assert.Single(matches, match => match.CustomerId == "C-06" && match.Offer is null
+            && match.LoanDecisionReason.Contains("No pre-approved limit", StringComparison.Ordinal));
+        Assert.Single(matches, match => match.CustomerId == "C-07" && match.Offer is null
+            && match.LoanDecisionReason.Contains("No pre-approved limit", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task NonUzsTenderDoesNotReceiveLoanOfferEvenWhenLimitCoversFiftyPercent()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(CreateCustomer("C-01", 100_000_000));
+        var tender = CreateTender();
+        tender.CurrencyCode = "USD";
+        db.Tenders.Add(tender);
+        await db.SaveChangesAsync();
+        var evaluator = new FakeMatchEvaluator([new TenderCandidateMatch("511680", "Bread sales match the tender.")]);
+        var events = await CollectEvents(CreateService(db, evaluator));
+        var match = Assert.Single(Assert.Single(events, e => e.Type == "customer-completed").Matches!);
+        Assert.Null(match.Offer);
+        Assert.Contains("not in UZS", match.LoanDecisionReason);
+    }
+
+    [Fact]
+    public async Task SavedMatchesUseCurrentLoanRulesAndRiskAcrossReadEndpoints()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        var customer = CreateCustomer("C-01", 50_000_000);
+        var tender = CreateTender();
+        tender.EndDate = DateTime.UtcNow.AddDays(10);
+        db.Customers.Add(customer);
+        db.Tenders.Add(tender);
+        db.Notifications.Add(new NotificationEntity
+        {
+            Id = "N-LEGACY", CustomerId = customer.CustomerId, LotId = "511680", CreatedAt = DateTime.UtcNow,
+            Title = "Bread supply", Body = "Bread supply", Buyer = "School department",
+            SourceUrl = tender.SourceUrl, Region = "Tashkent", StartPrice = tender.StartPrice,
+            CurrencyCode = "UZS", Deadline = DateOnly.FromDateTime(tender.EndDate),
+            MatchReason = "Bread sales match.", LoanDecisionReason = "The pre-approved limit is below 80% of the tender amount."
+        });
+        db.TenderFeedback.Add(new TenderFeedbackEntity { CustomerId = customer.CustomerId, TenderId = tender.Id, Value = "like" });
+        db.TenderApplications.Add(new TenderApplicationEntity { CustomerId = customer.CustomerId, TenderId = tender.Id, AppliedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var customers = new CustomersController(db);
+        var admin = new MatchesController(db, CreateService(db, new FakeMatchEvaluator([])), NullLogger<MatchesController>.Instance);
+
+        var match = Assert.Single((await customers.GetMatches("C-01", CancellationToken.None)).Value!);
+        var discovery = Assert.Single((await customers.GetDiscoveries("C-01", CancellationToken.None)).Value!);
+        var adminMatch = Assert.Single((await admin.GetAll(CancellationToken.None)).Value!);
+        Assert.Equal(50_000_000L, match.Offer!.Financing);
+        Assert.Equal(3_000_000L, match.Offer.Guarantee);
+        Assert.Contains("at least 50%", match.LoanDecisionReason);
+        Assert.Equal(match.Offer, discovery.Match.Offer);
+        Assert.Equal(match.Offer, adminMatch.Offer);
+        Assert.Equal("Bread sales match.", match.MatchReason);
+        Assert.Equal("like", match.Feedback);
+        Assert.NotNull(match.AppliedAt);
+        Assert.Single(await db.Notifications.ToListAsync());
+        Assert.Null((await db.Notifications.AsNoTracking().SingleAsync()).Offer);
+
+        var risk = await db.CustomerRiskFeatures.SingleAsync(r => r.CustomerId == "C-01");
+        risk.OverdueAmount = 1;
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var updated = Assert.Single((await customers.GetMatches("C-01", CancellationToken.None)).Value!);
+        var updatedAdmin = Assert.Single((await admin.GetAll(CancellationToken.None)).Value!);
+        Assert.Null(updated.Offer);
+        Assert.Contains("arrears", updated.LoanDecisionReason);
+        Assert.Null(updatedAdmin.Offer);
+        Assert.Equal("like", updated.Feedback);
+        Assert.NotNull(updated.AppliedAt);
     }
 
     [Fact]

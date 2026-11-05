@@ -738,6 +738,327 @@ public class TenderDiscoveryTests
         });
     }
 
+    [Fact]
+    public async Task FirstMatchAfterDeadlineIsSavedAndRemainingTendersAreResumed()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        db.Tenders.AddRange(Enumerable.Range(1, 6).Select(Tender));
+        await db.SaveChangesAsync();
+        using var http = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
+        var clock = new ManualTimeProvider();
+        var evaluator = new CallbackEvaluator((_, tenders, _) =>
+        {
+            clock.Advance(TimeSpan.FromSeconds(10));
+            return Task.FromResult<IReadOnlyList<TenderCandidateMatch>>(AllMatches(tenders));
+        });
+        var matcher = new MatchingService(db, evaluator, clock, NullLogger<MatchingService>.Instance);
+        var events = new List<TenderDiscoveryEvent>();
+        await foreach (var item in matcher.DiscoverAsync("C-1", 3, Importer(db, http), CancellationToken.None)) events.Add(item);
+
+        Assert.Equal(1, Assert.Single(events, e => e.Type == "match").Tender!.Id);
+        var completed = Assert.Single(events, e => e.Type == "completed");
+        Assert.True(completed.TimeLimited);
+        Assert.False(completed.Limited);
+        Assert.Equal(5, completed.Checked);
+        Assert.Equal(new long[] { 1 }, await db.TenderDiscoverySeen.Select(s => s.TenderId).ToArrayAsync());
+        db.ChangeTracker.Clear();
+        var resumed = new List<TenderDiscoveryEvent>();
+        await foreach (var item in Matcher(db).DiscoverAsync("C-1", 2, Importer(db, http), CancellationToken.None)) resumed.Add(item);
+        Assert.Equal(new long[] { 2, 3 }, resumed.Where(e => e.Type == "match").Select(e => e.Tender!.Id));
+        Assert.Equal(3, await db.Notifications.CountAsync());
+    }
+
+    [Fact]
+    public async Task DeadlineCancelsSlowMatchingWithoutMarkingItsBatchSeen()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        db.Tenders.AddRange(Enumerable.Range(1, 6).Select(Tender));
+        await db.SaveChangesAsync();
+        using var http = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
+        var clock = new ManualTimeProvider();
+        var evaluator = new CallbackEvaluator(async (call, tenders, ct) =>
+        {
+            if (call == 1) return AllMatches(tenders).Take(1).ToList();
+            clock.Advance(TimeSpan.FromMilliseconds(9999));
+            Assert.False(ct.IsCancellationRequested);
+            clock.Advance(TimeSpan.FromMilliseconds(1));
+            await Task.Delay(TimeSpan.FromSeconds(5), ct);
+            throw new InvalidOperationException("The matching call was not cancelled.");
+        });
+        var matcher = new MatchingService(db, evaluator, clock, NullLogger<MatchingService>.Instance);
+        var events = new List<TenderDiscoveryEvent>();
+        await foreach (var item in matcher.DiscoverAsync("C-1", 3, Importer(db, http), CancellationToken.None)) events.Add(item);
+
+        Assert.Equal(2, evaluator.Calls);
+        Assert.True(Assert.Single(events, e => e.Type == "completed").TimeLimited);
+        Assert.Equal(5, events.Last().Checked);
+        Assert.Equal(new long[] { 1, 2, 3, 4, 5 }, await db.TenderDiscoverySeen.OrderBy(s => s.TenderId).Select(s => s.TenderId).ToArrayAsync());
+        db.ChangeTracker.Clear();
+        var resumed = new List<TenderDiscoveryEvent>();
+        await foreach (var item in Matcher(db).DiscoverAsync("C-1", 1, Importer(db, http), CancellationToken.None)) resumed.Add(item);
+        Assert.Equal(6, Assert.Single(resumed, e => e.Type == "match").Tender!.Id);
+    }
+
+    [Fact]
+    public async Task DeadlineCancelsSlowImportAfterSavingMatch()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        db.Tenders.Add(Tender(1));
+        await db.SaveChangesAsync();
+        var clock = new ManualTimeProvider();
+        using var http = new HttpClient(new DeadlineHttpHandler(clock)) { BaseAddress = new Uri("https://uzex.test/") };
+        var matcher = new MatchingService(db, new AllMatchEvaluator(), clock, NullLogger<MatchingService>.Instance);
+        var events = new List<TenderDiscoveryEvent>();
+        await foreach (var item in matcher.DiscoverAsync("C-1", 3, Importer(db, http), CancellationToken.None)) events.Add(item);
+
+        Assert.Equal(1, Assert.Single(events, e => e.Type == "match").Tender!.Id);
+        var completed = Assert.Single(events, e => e.Type == "completed");
+        Assert.True(completed.TimeLimited);
+        Assert.Equal(1, completed.Checked);
+        Assert.Equal(0, completed.Imported);
+        Assert.Equal(1, await db.Notifications.CountAsync());
+        Assert.Equal(1, await db.TenderDiscoverySeen.CountAsync());
+    }
+
+    [Fact]
+    public async Task NoMatchAtDeadlineContinuesUntilFirstNewMatch()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        db.Tenders.AddRange(Enumerable.Range(1, 6).Select(Tender));
+        await db.SaveChangesAsync();
+        using var http = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
+        var clock = new ManualTimeProvider();
+        var evaluator = new CallbackEvaluator((call, tenders, ct) =>
+        {
+            if (call == 1)
+            {
+                clock.Advance(TimeSpan.FromSeconds(15));
+                Assert.False(ct.IsCancellationRequested);
+                return Task.FromResult<IReadOnlyList<TenderCandidateMatch>>([]);
+            }
+            return Task.FromResult<IReadOnlyList<TenderCandidateMatch>>(AllMatches(tenders));
+        });
+        var matcher = new MatchingService(db, evaluator, clock, NullLogger<MatchingService>.Instance);
+        var events = new List<TenderDiscoveryEvent>();
+        await foreach (var item in matcher.DiscoverAsync("C-1", 3, Importer(db, http), CancellationToken.None)) events.Add(item);
+
+        Assert.Equal(2, evaluator.Calls);
+        Assert.Equal(6, Assert.Single(events, e => e.Type == "match").Tender!.Id);
+        Assert.True(Assert.Single(events, e => e.Type == "completed").TimeLimited);
+        Assert.Equal(6, await db.TenderDiscoverySeen.CountAsync());
+    }
+
+    [Fact]
+    public async Task NoMatchDoesNotBecomeTimeLimitedWhenSourcesAreExhausted()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        db.Tenders.Add(Tender(1));
+        await db.SaveChangesAsync();
+        var handler = new UzexHandler(0);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://uzex.test/") };
+        var clock = new ManualTimeProvider();
+        var evaluator = new CallbackEvaluator((_, _, _) =>
+        {
+            clock.Advance(TimeSpan.FromSeconds(20));
+            return Task.FromResult<IReadOnlyList<TenderCandidateMatch>>([]);
+        });
+        var matcher = new MatchingService(db, evaluator, clock, NullLogger<MatchingService>.Instance);
+        var events = new List<TenderDiscoveryEvent>();
+        await foreach (var item in matcher.DiscoverAsync("C-1", 3, Importer(db, http), CancellationToken.None)) events.Add(item);
+
+        Assert.DoesNotContain(events, e => e.Type == "match");
+        Assert.False(Assert.Single(events, e => e.Type == "completed").TimeLimited);
+        Assert.True(handler.ListCalls > 0);
+    }
+
+    [Fact]
+    public async Task TargetReachedBeforeDeadlineCompletesNormally()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        db.Tenders.AddRange(Tender(1), Tender(2));
+        await db.SaveChangesAsync();
+        using var http = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
+        var matcher = new MatchingService(db, new AllMatchEvaluator(), new ManualTimeProvider(), NullLogger<MatchingService>.Instance);
+        var events = new List<TenderDiscoveryEvent>();
+        await foreach (var item in matcher.DiscoverAsync("C-1", 2, Importer(db, http), CancellationToken.None)) events.Add(item);
+
+        Assert.Equal(2, events.Count(e => e.Type == "match"));
+        Assert.False(Assert.Single(events, e => e.Type == "completed").TimeLimited);
+    }
+
+    [Fact]
+    public async Task ClientCancellationIsNotReportedAsDeadlineCompletion()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        db.Tenders.AddRange(Enumerable.Range(1, 6).Select(Tender));
+        await db.SaveChangesAsync();
+        using var http = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
+        using var request = new CancellationTokenSource();
+        var clock = new ManualTimeProvider();
+        var evaluator = new CallbackEvaluator((call, tenders, ct) =>
+        {
+            if (call == 1) return Task.FromResult<IReadOnlyList<TenderCandidateMatch>>(AllMatches(tenders).Take(1).ToList());
+            request.Cancel();
+            clock.Advance(TimeSpan.FromSeconds(10));
+            ct.ThrowIfCancellationRequested();
+            return Task.FromResult<IReadOnlyList<TenderCandidateMatch>>([]);
+        });
+        var matcher = new MatchingService(db, evaluator, clock, NullLogger<MatchingService>.Instance);
+        var events = new List<TenderDiscoveryEvent>();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            await foreach (var item in matcher.DiscoverAsync("C-1", 3, Importer(db, http), request.Token)) events.Add(item);
+        });
+        Assert.Single(events, e => e.Type == "match");
+        Assert.DoesNotContain(events, e => e.Type == "completed");
+        Assert.Equal(1, await db.Notifications.CountAsync());
+    }
+
+    [Fact]
+    public async Task DeadlineCancelsSlowSummaryWithoutLosingFirstMatch()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        var first = Tender(1);
+        var second = Tender(2);
+        second.EnglishTitle = null;
+        db.Tenders.AddRange(first, second);
+        await db.SaveChangesAsync();
+        using var http = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
+        var clock = new ManualTimeProvider();
+        var importer = Importer(db, http, new DeadlineSummarizer(clock));
+        var matcher = new MatchingService(db, new AllMatchEvaluator(), clock, NullLogger<MatchingService>.Instance);
+        var events = new List<TenderDiscoveryEvent>();
+        await foreach (var item in matcher.DiscoverAsync("C-1", 3, importer, CancellationToken.None)) events.Add(item);
+
+        Assert.Equal(1, Assert.Single(events, e => e.Type == "match").Tender!.Id);
+        Assert.True(Assert.Single(events, e => e.Type == "completed").TimeLimited);
+        Assert.Equal(new long[] { 1 }, await db.TenderDiscoverySeen.Select(s => s.TenderId).ToArrayAsync());
+        db.ChangeTracker.Clear();
+        Assert.Null((await db.Tenders.SingleAsync(t => t.Id == 2)).EnglishTitle);
+    }
+
+    [Fact]
+    public async Task PreviouslySavedMatchesDoNotStartTheNewSearchDeadline()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        db.Tenders.AddRange(Tender(1), Tender(2));
+        await db.SaveChangesAsync();
+        var handler = new UzexHandler(0);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://uzex.test/") };
+        await foreach (var _ in Matcher(db).DiscoverAsync("C-1", 1, Importer(db, http), CancellationToken.None)) { }
+        var clock = new ManualTimeProvider();
+        var evaluator = new CallbackEvaluator((_, _, ct) =>
+        {
+            clock.Advance(TimeSpan.FromSeconds(15));
+            Assert.False(ct.IsCancellationRequested);
+            return Task.FromResult<IReadOnlyList<TenderCandidateMatch>>([]);
+        });
+        var matcher = new MatchingService(db, evaluator, clock, NullLogger<MatchingService>.Instance);
+        var events = new List<TenderDiscoveryEvent>();
+        await foreach (var item in matcher.DiscoverAsync("C-1", 3, Importer(db, http), CancellationToken.None)) events.Add(item);
+
+        Assert.DoesNotContain(events, e => e.Type == "match");
+        Assert.False(Assert.Single(events, e => e.Type == "completed").TimeLimited);
+        Assert.True(handler.ListCalls > 0);
+        Assert.Equal(1, await db.Notifications.CountAsync());
+    }
+
+    [Fact]
+    public async Task FailureAfterFirstMatchIsNotReportedAsDeadlineCompletion()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        db.Tenders.AddRange(Enumerable.Range(1, 6).Select(Tender));
+        await db.SaveChangesAsync();
+        using var http = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
+        var evaluator = new CallbackEvaluator((call, tenders, _) =>
+            call == 1
+                ? Task.FromResult<IReadOnlyList<TenderCandidateMatch>>(AllMatches(tenders).Take(1).ToList())
+                : throw new InvalidOperationException("Simulated failure"));
+        var matcher = new MatchingService(db, evaluator, new ManualTimeProvider(), NullLogger<MatchingService>.Instance);
+        var events = new List<TenderDiscoveryEvent>();
+        await Assert.ThrowsAsync<TenderMatchEvaluationException>(async () =>
+        {
+            await foreach (var item in matcher.DiscoverAsync("C-1", 3, Importer(db, http), CancellationToken.None)) events.Add(item);
+        });
+        Assert.Single(events, e => e.Type == "match");
+        Assert.DoesNotContain(events, e => e.Type == "completed");
+        Assert.Equal(1, await db.Notifications.CountAsync());
+    }
+
+    [Fact]
+    public async Task DeadlineIsSentAsNormalCompletionOverSse()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        db.Tenders.Add(Tender(1));
+        await db.SaveChangesAsync();
+        using var http = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
+        var clock = new ManualTimeProvider();
+        var evaluator = new CallbackEvaluator((_, tenders, _) =>
+        {
+            clock.Advance(TimeSpan.FromSeconds(10));
+            return Task.FromResult<IReadOnlyList<TenderCandidateMatch>>(AllMatches(tenders));
+        });
+        var matcher = new MatchingService(db, evaluator, clock, NullLogger<MatchingService>.Instance);
+        await using var body = new MemoryStream();
+        var context = new DefaultHttpContext();
+        context.Response.Body = body;
+        var controller = new MatchesController(db, matcher, NullLogger<MatchesController>.Instance)
+        {
+            ControllerContext = new ControllerContext { HttpContext = context }
+        };
+        await controller.Discover("C-1", null, Importer(db, http), CancellationToken.None);
+        body.Position = 0;
+        var payload = await new StreamReader(body, Encoding.UTF8).ReadToEndAsync();
+        Assert.Contains("\"type\":\"match\"", payload);
+        Assert.Contains("\"type\":\"completed\"", payload);
+        Assert.Contains("\"timeLimited\":true", payload);
+        Assert.DoesNotContain("\"type\":\"error\"", payload);
+    }
+
     private static CustomerEntity Customer(string id) => new()
     {
         CustomerId = id, Name = "Bakery", TaxCode = "300000001", Type = "LLC", IndustryCode = "10710",
@@ -757,10 +1078,86 @@ public class TenderDiscoveryTests
     private static MatchingService Matcher(TenderAiDbContext db) =>
         new(db, new AllMatchEvaluator(), TimeProvider.System, NullLogger<MatchingService>.Instance);
 
-    private static TenderImportService Importer(TenderAiDbContext db, HttpClient http) =>
-        new(db, new UzexClient(http), new TenderSummaryService(new Summarizer(), NullLogger<TenderSummaryService>.Instance),
+    private static TenderImportService Importer(TenderAiDbContext db, HttpClient http, ITenderSummarizer? summarizer = null) =>
+        new(db, new UzexClient(http), new TenderSummaryService(summarizer ?? new Summarizer(), NullLogger<TenderSummaryService>.Instance),
             Options.Create(new UzexOptions { ApiBaseUrl = "https://uzex.test/", LotUrl = "https://uzex.test/{0}" }),
             NullLogger<TenderImportService>.Instance);
+
+    private static List<TenderCandidateMatch> AllMatches(IReadOnlyCollection<TenderMatchEvidence> tenders) =>
+        tenders.Select(t => new TenderCandidateMatch(t.TenderId, "Bread activity and incoming bread payments match.")).ToList();
+
+    private sealed class CallbackEvaluator(
+        Func<int, IReadOnlyCollection<TenderMatchEvidence>, CancellationToken, Task<IReadOnlyList<TenderCandidateMatch>>> callback)
+        : ITenderMatchEvaluator
+    {
+        public int Calls { get; private set; }
+        public Task<IReadOnlyList<TenderCandidateMatch>> EvaluateCustomerAsync(CustomerMatchEvidence customer,
+            IReadOnlyCollection<TenderMatchEvidence> tenders, CancellationToken ct) => callback(++Calls, tenders, ct);
+    }
+
+    private sealed class ManualTimeProvider : TimeProvider
+    {
+        private readonly DateTimeOffset initialTime = DateTimeOffset.UtcNow;
+        private readonly List<ManualTimer> timers = [];
+        private long ticks;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => ticks;
+        public override DateTimeOffset GetUtcNow() => initialTime.AddTicks(ticks);
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new ManualTimer(this, callback, state);
+            timers.Add(timer);
+            timer.Change(dueTime, period);
+            return timer;
+        }
+
+        public void Advance(TimeSpan amount)
+        {
+            ticks += amount.Ticks;
+            foreach (var timer in timers.ToArray()) timer.FireIfDue();
+        }
+
+        private sealed class ManualTimer(ManualTimeProvider clock, TimerCallback callback, object? state) : ITimer
+        {
+            private long? due;
+            public bool Change(TimeSpan dueTime, TimeSpan period)
+            {
+                if (period != Timeout.InfiniteTimeSpan) throw new NotSupportedException("Only one-shot timers are supported.");
+                due = dueTime == Timeout.InfiniteTimeSpan ? null : clock.ticks + dueTime.Ticks;
+                return true;
+            }
+            public void FireIfDue()
+            {
+                if (due is null || clock.ticks < due) return;
+                due = null;
+                callback(state);
+            }
+            public void Dispose() => due = null;
+            public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
+        }
+    }
+
+    private sealed class DeadlineHttpHandler(ManualTimeProvider clock) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            clock.Advance(TimeSpan.FromSeconds(10));
+            ct.ThrowIfCancellationRequested();
+            throw new InvalidOperationException("The import should have been cancelled.");
+        }
+    }
+
+    private sealed class DeadlineSummarizer(ManualTimeProvider clock) : ITenderSummarizer
+    {
+        public async Task<string> SummarizeAsync(TenderEntity tender, CancellationToken ct)
+        {
+            clock.Advance(TimeSpan.FromSeconds(10));
+            await Task.Delay(TimeSpan.FromSeconds(5), ct);
+            throw new InvalidOperationException("The summary call was not cancelled.");
+        }
+    }
 
     private sealed class AllMatchEvaluator : ITenderMatchEvaluator
     {

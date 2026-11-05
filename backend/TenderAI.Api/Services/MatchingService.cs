@@ -20,6 +20,7 @@ namespace TenderAI.Api.Services
         public const int MaxDiscoveryCount = 10;
         private const int DiscoveryBatchSize = 5;
         public const int MaxImportedPerSearch = 50;
+        private static readonly TimeSpan DiscoveryTimeLimit = TimeSpan.FromSeconds(10);
         private static readonly SemaphoreSlim DiscoveryLock = new(1, 1);
 
         public static async Task<IDisposable> LockDiscoveryAsync(CancellationToken ct)
@@ -37,8 +38,14 @@ namespace TenderAI.Api.Services
             string customerId, int count, TenderImportService importer, [EnumeratorCancellation] CancellationToken ct)
         {
             if (count < 1 || count > MaxDiscoveryCount) throw new ArgumentOutOfRangeException(nameof(count));
+            var startedAt = timeProvider.GetTimestamp();
             using (await LockDiscoveryAsync(ct))
             {
+                using var timeLimit = new CancellationTokenSource();
+                using var searchCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct, timeLimit.Token);
+                await using var timer = timeProvider.CreateTimer(
+                    static state => ((CancellationTokenSource)state!).Cancel(),
+                    timeLimit, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
                 var now = timeProvider.GetUtcNow().ToOffset(TashkentOffset).DateTime;
                 var today = DateOnly.FromDateTime(now);
                 var customer = await db.Customers.AsNoTracking().Include(c => c.RiskFeatures).Include(c => c.Payments)
@@ -64,6 +71,7 @@ namespace TenderAI.Api.Services
                 var importedCount = 0;
                 var checkedCount = 0;
                 var limited = false;
+                var timeLimited = false;
                 yield return new TenderDiscoveryEvent("started", Count: count);
                 if (!customer.Payments.Any(p => p.IsIncoming && p.Date >= today.AddMonths(-12)
                     && p.Date <= today && !string.IsNullOrWhiteSpace(p.PurposeDescription)))
@@ -74,28 +82,59 @@ namespace TenderAI.Api.Services
                 using var semaphore = new SemaphoreSlim(1);
                 while (matchedCount < count)
                 {
+                    ct.ThrowIfCancellationRequested();
+                    if (timeLimit.IsCancellationRequested) { timeLimited = true; break; }
                     if (candidates.Count == 0)
                     {
                         if (importedCount >= MaxImportedPerSearch) { limited = true; break; }
                         yield return new TenderDiscoveryEvent("progress", matchedCount, Imported: importedCount, Checked: checkedCount, Phase: "loading");
                         var loadedCount = 0;
-                        await foreach (var tender in importer.LoadNewStreamingAsync(Math.Min(DiscoveryBatchSize, MaxImportedPerSearch - importedCount), ct))
+                        await using (var imports = importer.LoadNewStreamingAsync(
+                            Math.Min(DiscoveryBatchSize, MaxImportedPerSearch - importedCount), searchCancellation.Token)
+                            .GetAsyncEnumerator(searchCancellation.Token))
                         {
-                            loadedCount++;
-                            importedCount++;
-                            if (!tender.IsDeleted && tender.EndDate >= now && !seen.Contains(tender.Id)
-                                && feedback.GetValueOrDefault(tender.Id) != "dislike")
-                                candidates.Add(tender);
-                            yield return new TenderDiscoveryEvent("progress", matchedCount, Imported: importedCount, Checked: checkedCount, Phase: "loading");
+                            while (true)
+                            {
+                                bool movedNext;
+                                try
+                                {
+                                    movedNext = await imports.MoveNextAsync();
+                                }
+                                catch (OperationCanceledException) when (timeLimit.IsCancellationRequested && !ct.IsCancellationRequested)
+                                {
+                                    timeLimited = true;
+                                    break;
+                                }
+                                if (!movedNext) break;
+                                var tender = imports.Current;
+                                loadedCount++;
+                                importedCount++;
+                                if (!tender.IsDeleted && tender.EndDate >= now && !seen.Contains(tender.Id)
+                                    && feedback.GetValueOrDefault(tender.Id) != "dislike")
+                                    candidates.Add(tender);
+                                yield return new TenderDiscoveryEvent("progress", matchedCount, Imported: importedCount, Checked: checkedCount, Phase: "loading");
+                                ct.ThrowIfCancellationRequested();
+                                if (timeLimit.IsCancellationRequested) { timeLimited = true; break; }
+                            }
                         }
+                        if (timeLimited) break;
                         if (loadedCount == 0) break;
                         if (candidates.Count == 0) continue;
                     }
                     var batch = candidates.Take(DiscoveryBatchSize).ToList();
                     candidates.RemoveRange(0, batch.Count);
                     yield return new TenderDiscoveryEvent("progress", matchedCount, Imported: importedCount, Checked: checkedCount, Phase: "matching");
-                    var evaluation = await EvaluateCustomerAsync(customer, batch.Select(ToTenderEvidence).ToList(),
-                        today.AddMonths(-12), today, semaphore, ct);
+                    CustomerEvaluationResult evaluation;
+                    try
+                    {
+                        evaluation = await EvaluateCustomerAsync(customer, batch.Select(ToTenderEvidence).ToList(),
+                            today.AddMonths(-12), today, semaphore, searchCancellation.Token);
+                    }
+                    catch (OperationCanceledException) when (timeLimit.IsCancellationRequested && !ct.IsCancellationRequested)
+                    {
+                        timeLimited = true;
+                        break;
+                    }
                     if (evaluation.Error is not null)
                         throw new TenderMatchEvaluationException("The tender search could not be completed.", evaluation.Error);
                     checkedCount += batch.Count;
@@ -103,13 +142,23 @@ namespace TenderAI.Api.Services
                     var matches = evaluation.Matches!.ToDictionary(match => match.TenderId, StringComparer.Ordinal);
                     foreach (var tender in batch)
                     {
+                        ct.ThrowIfCancellationRequested();
+                        if (timeLimit.IsCancellationRequested) { timeLimited = true; break; }
                         matches.TryGetValue(tender.Id.ToString(CultureInfo.InvariantCulture), out var match);
                         var identity = TenderIdentity.For(tender);
                         if (identity is not null && savedIdentities.Contains(identity)) match = null;
                         if (match is not null && (string.IsNullOrWhiteSpace(tender.Summary) || string.IsNullOrWhiteSpace(tender.EnglishTitle)))
                         {
                             yield return new TenderDiscoveryEvent("progress", matchedCount, Imported: importedCount, Checked: checkedCount, Phase: "summarizing");
-                            await importer.RefreshSummaryAsync(tender, ct);
+                            try
+                            {
+                                await importer.RefreshSummaryAsync(tender, searchCancellation.Token);
+                            }
+                            catch (OperationCanceledException) when (timeLimit.IsCancellationRequested && !ct.IsCancellationRequested)
+                            {
+                                timeLimited = true;
+                            }
+                            if (timeLimited) break;
                             if (string.IsNullOrWhiteSpace(tender.Summary) || string.IsNullOrWhiteSpace(tender.EnglishTitle))
                                 throw new TenderMatchEvaluationException("A matching tender could not be summarized. Check the Bedrock configuration.");
                         }
@@ -140,17 +189,25 @@ namespace TenderAI.Api.Services
                         if (notification is null) continue;
                         if (identity is not null) savedIdentities.Add(identity);
                         matchedCount++;
+                        if (matchedCount == 1 && matchedCount < count)
+                        {
+                            var remaining = DiscoveryTimeLimit - timeProvider.GetElapsedTime(startedAt);
+                            if (remaining <= TimeSpan.Zero) timeLimited = true;
+                            else timer.Change(remaining, Timeout.InfiniteTimeSpan);
+                        }
                         yield return new TenderDiscoveryEvent("match", matchedCount,
                             tender.ToDto(), notification.ToDto(tender.EnglishTitle) with
                             {
                                 Feedback = currentFeedback,
                                 AppliedAt = appliedAt.HasValue ? DateTime.SpecifyKind(appliedAt.Value, DateTimeKind.Utc) : null
                             }, Imported: importedCount, Checked: checkedCount);
-                        if (matchedCount == count) break;
+                        if (matchedCount == count || timeLimited) break;
                     }
+                    if (timeLimited) break;
                     yield return new TenderDiscoveryEvent("progress", matchedCount, Imported: importedCount, Checked: checkedCount, Phase: "matching");
                 }
-                yield return new TenderDiscoveryEvent("completed", matchedCount, Imported: importedCount, Limited: limited, Checked: checkedCount);
+                ct.ThrowIfCancellationRequested();
+                yield return new TenderDiscoveryEvent("completed", matchedCount, Imported: importedCount, Limited: limited, Checked: checkedCount, TimeLimited: timeLimited);
             }
         }
 
@@ -405,9 +462,9 @@ namespace TenderAI.Api.Services
                 return (null, "This tender is not in UZS, so a loan application is not suggested.");
             }
 
-            if (limit.Value < tender.StartPrice * 0.8m)
+            if (limit.Value < tender.StartPrice * 0.5m)
             {
-                return (null, "The pre-approved limit is below 80% of the tender amount.");
+                return (null, "The pre-approved limit is below 50% of the tender amount.");
             }
 
             if (risk!.OverdueAmount > 0 || risk.MaxOverdueDays12m > 0)
@@ -444,7 +501,13 @@ namespace TenderAI.Api.Services
                     Guarantee = guarantee,
                     PreApprovedLimit = limit.Value
                 },
-                $"Limit covers at least 80% of the tender and no arrears are recorded; you may apply for {string.Join(" and ", products)}. Final approval requires bank review.");
+                $"Limit covers at least 50% of the tender and no arrears are recorded; you may apply for {string.Join(" and ", products)}. Final approval requires bank review.");
+        }
+
+        internal static (LoanOfferDto? Offer, string Reason) GetCurrentLoanDecision(CustomerEntity customer, TenderEntity tender)
+        {
+            var (offer, reason) = GetLoanDecision(customer, tender);
+            return (offer is null ? null : new LoanOfferDto(offer.Financing, offer.Guarantee, offer.PreApprovedLimit), reason);
         }
 
         private static TenderMatchEvidence ToTenderEvidence(TenderEntity tender)
@@ -557,5 +620,5 @@ namespace TenderAI.Api.Services
 
     public sealed record TenderDiscoveryEvent(
         string Type, int Count = 0, TenderDto? Tender = null, NotificationDto? Match = null,
-        int Imported = 0, bool Limited = false, int Checked = 0, string? Phase = null);
+        int Imported = 0, bool Limited = false, int Checked = 0, string? Phase = null, bool TimeLimited = false);
 }
