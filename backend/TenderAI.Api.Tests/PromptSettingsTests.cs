@@ -21,6 +21,21 @@ namespace TenderAI.Api.Tests;
 public class PromptSettingsTests
 {
     [Fact]
+    public void MatchingPromptsRequireSameSalesCategoryAndRejectCropServicesForDiesel()
+    {
+        Assert.Contains("same specific product or service category", TenderMatchPrompt.Instructions);
+        Assert.Contains("incoming payment", TenderMatchPrompt.Instructions);
+        Assert.Contains("Crop-production support", TenderMatchPrompt.Instructions);
+        Assert.Contains("NOT a match", TenderMatchPrompt.Instructions);
+        Assert.Contains("bread-supply tender", TenderMatchPrompt.Instructions);
+        Assert.Contains("harvesting services", TenderMatchPrompt.Instructions);
+        Assert.Contains("same specific category", TenderMatchPrompt.RequiredInstructions);
+        Assert.Contains("crop-production support", TenderMatchPrompt.RequiredInstructions);
+        Assert.Contains("diesel-fuel", TenderMatchPrompt.RequiredInstructions);
+        Assert.Contains("untrusted data", TenderMatchPrompt.RequiredInstructions);
+    }
+
+    [Fact]
     public async Task DefaultsValidationPersistenceConflictAndRestoreWorkAcrossScopes()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
