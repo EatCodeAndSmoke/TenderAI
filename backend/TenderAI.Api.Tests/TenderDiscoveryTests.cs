@@ -85,16 +85,44 @@ public class TenderDiscoveryTests
         await foreach (var item in matcher.DiscoverAsync("C-1", 2, importer, CancellationToken.None)) events.Add(item);
         var matches = events.Where(e => e.Type == "match").ToList();
         Assert.Equal(2, matches.Count);
+        Assert.All(matches, match => Assert.Equal(88, match.Match!.MatchScore));
         Assert.Equal(new long[] { 2, 3 }, matches.Select(m => m.Tender!.Id));
         Assert.Equal("like", matches[0].Match!.Feedback);
         Assert.Equal(2, events.Single(e => e.Type == "completed").Count);
         Assert.Equal(0, handler.ListCalls);
         var controller = new CustomersController(db);
+        Assert.All((await controller.GetDiscoveries("C-1", CancellationToken.None)).Value!, saved => Assert.Equal(88, saved.Match.MatchScore));
         Assert.IsType<NoContentResult>(await controller.SetFeedback("C-1", 3, new TenderFeedbackRequest("dislike"), CancellationToken.None));
         var loaded = await controller.GetMatches("C-1", CancellationToken.None);
         Assert.Equal("2", Assert.Single(loaded.Value!).LotId);
+        Assert.Equal(88, Assert.Single(loaded.Value!).MatchScore);
         Assert.Equal("like", Assert.Single(loaded.Value!).Feedback);
         Assert.Equal(0, await db.TenderFeedback.CountAsync(f => f.CustomerId == "C-2"));
+    }
+
+    [Fact]
+    public async Task DiscoveryOnlySavesAndCountsScoresAtLeastSeventyFive()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new TenderAiDbContext(new DbContextOptionsBuilder<TenderAiDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Customers.Add(Customer("C-1"));
+        db.Tenders.AddRange(Enumerable.Range(1, 5).Select(Tender));
+        await db.SaveChangesAsync();
+        var scores = new[] { 74, 75, 84, 85, 100 };
+        var evaluator = new CallbackEvaluator((_, tenders, _) => Task.FromResult<IReadOnlyList<TenderCandidateMatch>>(
+            tenders.Select(t => new TenderCandidateMatch(t.TenderId, "Bread activity and payments match.", scores[int.Parse(t.TenderId) - 1])).ToList()));
+        var matcher = new MatchingService(db, evaluator, TimeProvider.System, NullLogger<MatchingService>.Instance);
+        using var http = new HttpClient(new UzexHandler(0)) { BaseAddress = new Uri("https://uzex.test/") };
+        var events = new List<TenderDiscoveryEvent>();
+        await foreach (var item in matcher.DiscoverAsync("C-1", 5, Importer(db, http), CancellationToken.None)) events.Add(item);
+
+        Assert.Equal(new[] { 75, 84, 85, 100 }, events.Where(e => e.Type == "match").Select(e => e.Match!.MatchScore!.Value));
+        Assert.Equal(4, events.Single(e => e.Type == "completed").Count);
+        Assert.Equal(5, events.Single(e => e.Type == "completed").Checked);
+        Assert.Equal(5, await db.TenderDiscoverySeen.CountAsync());
+        Assert.Equal(new[] { 75, 84, 85, 100 }, await db.Notifications.OrderBy(n => n.MatchScore).Select(n => n.MatchScore!.Value).ToArrayAsync());
     }
 
     [Fact]
@@ -1148,7 +1176,7 @@ public class TenderDiscoveryTests
             NullLogger<TenderImportService>.Instance);
 
     private static List<TenderCandidateMatch> AllMatches(IReadOnlyCollection<TenderMatchEvidence> tenders) =>
-        tenders.Select(t => new TenderCandidateMatch(t.TenderId, "Bread activity and incoming bread payments match.")).ToList();
+        tenders.Select(t => new TenderCandidateMatch(t.TenderId, "Bread activity and incoming bread payments match.", 88)).ToList();
 
     private sealed class CallbackEvaluator(
         Func<int, IReadOnlyCollection<TenderMatchEvidence>, CancellationToken, Task<IReadOnlyList<TenderCandidateMatch>>> callback)
@@ -1228,7 +1256,7 @@ public class TenderDiscoveryTests
         public Task<IReadOnlyList<TenderCandidateMatch>> EvaluateCustomerAsync(CustomerMatchEvidence customer,
             IReadOnlyCollection<TenderMatchEvidence> tenders, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<TenderCandidateMatch>>(tenders.Select(t =>
-                new TenderCandidateMatch(t.TenderId, "Bread activity and incoming bread payments match.")).ToList());
+                new TenderCandidateMatch(t.TenderId, "Bread activity and incoming bread payments match.", 88)).ToList());
     }
 
     private sealed class NoMatchEvaluator : ITenderMatchEvaluator
@@ -1247,7 +1275,7 @@ public class TenderDiscoveryTests
             Batches.Add(tenders.Select(t => long.Parse(t.TenderId)).ToArray());
             return Task.FromResult<IReadOnlyList<TenderCandidateMatch>>(tenders
                 .Where(t => long.Parse(t.TenderId) % 2 == 0)
-                .Select(t => new TenderCandidateMatch(t.TenderId, "Bread activity and incoming bread payments match.")).ToList());
+                .Select(t => new TenderCandidateMatch(t.TenderId, "Bread activity and incoming bread payments match.", 88)).ToList());
         }
 
     }

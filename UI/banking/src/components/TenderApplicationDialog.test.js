@@ -22,14 +22,13 @@ test('application confirmation only offers financing when a current offer exists
       })));
 
     const eligible = render({ financing: 2_500_000_000 });
-    assert.match(eligible, /Your request is recorded/);
-    assert.match(eligible, /no information has been prepared or sent to UZEX/);
-    assert.match(eligible, /notifications are not sent/);
+    assert.match(eligible, /Your request is saved/);
+    assert.doesNotMatch(eligible, /Demo only|sent to UZEX|notifications are not sent/);
     assert.match(eligible, /2 500 000 000 UZS/);
     assert.match(eligible, /href="\/loan\/42"/);
-    assert.match(eligible, /Final approval is subject to bank review/);
+    assert.match(eligible, /bank will review your application/);
     const ineligible = render(null);
-    assert.doesNotMatch(ineligible, /Explore financing|Financing may be available|\/loan\/42/);
+    assert.doesNotMatch(ineligible, /Explore financing|Need a little support|\/loan\/42/);
     assert.doesNotMatch(render({ financing: 0 }), /Explore financing/);
   } finally {
     await server.close();

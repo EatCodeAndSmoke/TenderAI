@@ -13,7 +13,7 @@ test('progress reports checked tenders and matches without mistaking the target 
   state = updateTenderProgress(state, { type: 'completed', count: 1, checked: 5, limited: true });
   assert.equal(state.completed, true);
   assert.match(tenderProgressMessage(state, false), /Search again/);
-  assert.match(tenderProgressMessage(state, true), /stopped/);
+  assert.match(tenderProgressMessage(state, true), /couldn’t finish/);
 });
 
 test('a time-limited search completes without appearing to fail', () => {
@@ -21,5 +21,10 @@ test('a time-limited search completes without appearing to fail', () => {
     type: 'completed', count: 1, checked: 5, timeLimited: true
   });
   assert.equal(state.timeLimited, true);
-  assert.match(tenderProgressMessage(state, false), /paused after finding a match/);
+  assert.match(tenderProgressMessage(state, false), /found an opportunity/);
+});
+
+test('a completed search without new matches gives a friendly empty result', () => {
+  const state = updateTenderProgress(initialTenderProgress(), { type: 'completed', count: 0, checked: 5 });
+  assert.match(tenderProgressMessage(state, false), /No new matches/);
 });

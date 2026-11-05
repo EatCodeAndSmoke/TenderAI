@@ -12,6 +12,7 @@ test('match explanation omits loan decision text but keeps eligible financing li
     server: { middlewareMode: true },
     appType: 'custom'
   });
+
   try {
     const { TenderMatchExplanation } = await server.ssrLoadModule('/src/pages/TendersPage.jsx');
     const render = (offer, isOpen = true) => renderToStaticMarkup(React.createElement(MemoryRouter, null,
@@ -25,6 +26,26 @@ test('match explanation omits loan decision text but keeps eligible financing li
     assert.match(eligible, /href="\/loan\/42"/);
     assert.doesNotMatch(render(null), /Explore financing|Private loan decision explanation/);
     assert.doesNotMatch(render({ financing: 100 }, false), /Explore financing|Private loan decision explanation/);
+  } finally {
+    await server.close();
+  }
+});
+
+test('fit badge shows only the two qualifying AI fit categories', async () => {
+  const server = await createServer({
+    root: fileURLToPath(new URL('../../', import.meta.url)),
+    server: { middlewareMode: true },
+    appType: 'custom'
+  });
+  try {
+    const { TenderFitBadge } = await server.ssrLoadModule('/src/pages/TendersPage.jsx');
+    const render = matchScore => renderToStaticMarkup(React.createElement(TenderFitBadge, { match: { matchScore } }));
+    assert.match(render(92), /Best match.*92\/100 AI fit/);
+    assert.match(render(75), /Might interest you.*75\/100 AI fit/);
+    assert.match(render(84), /Might interest you.*84\/100 AI fit/);
+    assert.match(render(85), /Best match.*85\/100 AI fit/);
+    assert.equal(render(74), '');
+    assert.equal(render(null), '');
   } finally {
     await server.close();
   }

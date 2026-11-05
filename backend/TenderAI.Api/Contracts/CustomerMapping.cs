@@ -101,7 +101,8 @@ namespace TenderAI.Api.Contracts
             n.Requirements,
             n.MatchReason,
             n.LoanDecisionReason,
-            n.Offer is null ? null : new LoanOfferDto(n.Offer.Financing, n.Offer.Guarantee, n.Offer.PreApprovedLimit));
+            n.Offer is null ? null : new LoanOfferDto(n.Offer.Financing, n.Offer.Guarantee, n.Offer.PreApprovedLimit),
+            MatchScore: n.MatchScore);
 
         public static MatchDto ToMatchDto(this NotificationEntity n, string customerName, string? tenderSummary = null) => new(
             n.CustomerId,
@@ -113,7 +114,8 @@ namespace TenderAI.Api.Contracts
             n.MatchReason,
             n.LoanDecisionReason,
             n.Offer is null ? null : new LoanOfferDto(n.Offer.Financing, n.Offer.Guarantee, n.Offer.PreApprovedLimit),
-            DateTime.SpecifyKind(n.CreatedAt, DateTimeKind.Utc));
+            DateTime.SpecifyKind(n.CreatedAt, DateTimeKind.Utc),
+            n.MatchScore);
 
         private static string TenderDisplayTitle(string title, string? tenderSummary) =>
             string.IsNullOrWhiteSpace(tenderSummary) ? title : tenderSummary;

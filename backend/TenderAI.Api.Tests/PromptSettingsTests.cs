@@ -37,6 +37,12 @@ public class PromptSettingsTests
         Assert.Contains("Computer sales alone do NOT support an automatic weather station tender", TenderMatchPrompt.RequiredInstructions);
         Assert.Contains("120 words and 1200 characters", TenderMatchPrompt.Instructions);
         Assert.Contains("120", TenderMatchPrompt.RequiredInstructions);
+        Assert.Contains("\"matchScore\"", TenderMatchPrompt.Instructions);
+        Assert.Contains("\"matchScore\"", TenderMatchPrompt.RequiredInstructions);
+        Assert.Contains("not measured", TenderMatchPrompt.RequiredInstructions);
+        Assert.Contains("85-100", TenderMatchPrompt.RequiredInstructions);
+        Assert.Contains("75-84", TenderMatchPrompt.RequiredInstructions);
+        Assert.Contains("omit tenders scored below 75", TenderMatchPrompt.RequiredInstructions);
     }
 
     [Fact]
@@ -161,7 +167,7 @@ public class PromptSettingsTests
         var reason = words > 0 ? string.Join(" ", Enumerable.Repeat("word", words)) : new string('x', characters);
         using var bedrock = new CapturingBedrockClient
         {
-            MatchingText = JsonSerializer.Serialize(new { matches = new[] { new { tenderId = "42", reason } } })
+            MatchingText = JsonSerializer.Serialize(new { matches = new[] { new { tenderId = "42", reason, matchScore = 88 } } })
         };
         var evaluator = new BedrockTenderMatchEvaluator(bedrock, Options.Create(new BedrockOptions { ModelId = "test" }),
             services.GetRequiredService<PromptSettings>(), NullLogger<BedrockTenderMatchEvaluator>.Instance);
@@ -171,6 +177,33 @@ public class PromptSettingsTests
 
         if (accepted)
             Assert.Equal(reason, Assert.Single(await evaluator.EvaluateCustomerAsync(customer, tenders, CancellationToken.None)).Reason);
+        else
+            await Assert.ThrowsAsync<TenderMatchEvaluationException>(() => evaluator.EvaluateCustomerAsync(customer, tenders, CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("""{"matches":[{"tenderId":"42","reason":"Bread sales match.","matchScore":1}]}""", true)]
+    [InlineData("""{"matches":[{"tenderId":"42","reason":"Bread sales match.","matchScore":100}]}""", true)]
+    [InlineData("""{"matches":[{"tenderId":"42","reason":"Bread sales match.","matchScore":0}]}""", false)]
+    [InlineData("""{"matches":[{"tenderId":"42","reason":"Bread sales match.","matchScore":101}]}""", false)]
+    [InlineData("""{"matches":[{"tenderId":"42","reason":"Bread sales match."}]}""", false)]
+    [InlineData("""{"matches":[{"tenderId":"42","reason":"Bread sales match.","matchScore":1.5}]}""", false)]
+    [InlineData("""{"matches":[{"tenderId":"42","reason":"Bread sales match.","matchScore":"85"}]}""", false)]
+    public async Task BedrockMatchingValidatesFitScore(string response, bool accepted)
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var services = CreateServices(connection);
+        await using var scope = services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<TenderAiDbContext>().Database.EnsureCreatedAsync();
+        using var bedrock = new CapturingBedrockClient { MatchingText = response };
+        var evaluator = new BedrockTenderMatchEvaluator(bedrock, Options.Create(new BedrockOptions { ModelId = "test" }),
+            services.GetRequiredService<PromptSettings>(), NullLogger<BedrockTenderMatchEvaluator>.Instance);
+        var customer = new CustomerMatchEvidence("C-42", "10710", "Bakery", null, null,
+            [new IncomingPaymentEvidence(new DateOnly(2026, 1, 1), "Bread payment")]);
+        var tenders = new[] { new TenderMatchEvidence("42", "Bread supply", null, null, []) };
+        if (accepted)
+            Assert.InRange(Assert.Single(await evaluator.EvaluateCustomerAsync(customer, tenders, CancellationToken.None)).MatchScore, 1, 100);
         else
             await Assert.ThrowsAsync<TenderMatchEvaluationException>(() => evaluator.EvaluateCustomerAsync(customer, tenders, CancellationToken.None));
     }
