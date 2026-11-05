@@ -72,11 +72,12 @@ namespace TenderAI.Api.Controllers
         }
 
         [HttpPost("/api/customers/{customerId}/discover/stream")]
-        public async Task Discover(string customerId, [FromQuery] int count,
+        public async Task Discover(string customerId, [FromQuery] int? count,
             [FromServices] TenderImportService importer, CancellationToken ct)
         {
             customerId = customerId.Trim().ToUpperInvariant();
-            if (count < 1 || count > MatchingService.MaxDiscoveryCount)
+            var targetCount = count ?? MatchingService.DefaultDiscoveryCount;
+            if (targetCount < 1 || targetCount > MatchingService.MaxDiscoveryCount)
             {
                 Response.StatusCode = StatusCodes.Status400BadRequest;
                 await Response.WriteAsJsonAsync(new ProblemDetails { Title = "Count must be between 1 and 10." }, ct);
@@ -93,7 +94,7 @@ namespace TenderAI.Api.Controllers
             HttpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
             try
             {
-                await foreach (var item in matchingService.DiscoverAsync(customerId, count, importer, ct))
+                await foreach (var item in matchingService.DiscoverAsync(customerId, targetCount, importer, ct))
                 {
                     await Response.WriteAsync($"data: {JsonSerializer.Serialize(item, EventJsonOptions)}\n\n", ct);
                     await Response.Body.FlushAsync(ct);

@@ -47,7 +47,6 @@ builder.Services.AddSingleton<IAmazonBedrockRuntime>(services =>
             RegionEndpoint = RegionEndpoint.GetBySystemName(region)
         });
 });
-builder.Services.AddSingleton<ICustomerProfileGenerator, BedrockCustomerProfileGenerator>();
 builder.Services.AddSingleton<ITenderSummarizer, BedrockTenderSummarizer>();
 builder.Services.AddSingleton<TenderSummaryService>();
 

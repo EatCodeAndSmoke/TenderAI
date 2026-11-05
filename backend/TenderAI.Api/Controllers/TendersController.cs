@@ -132,7 +132,8 @@ namespace TenderAI.Api.Controllers
             await db.Notifications.ExecuteDeleteAsync(ct);
             await db.TenderFeedback.ExecuteDeleteAsync(ct);
             await db.TenderApplications.ExecuteDeleteAsync(ct);
-            await db.Tenders.Where(t => !t.IsDeleted).ExecuteUpdateAsync(setters => setters.SetProperty(t => t.IsDeleted, true), ct);
+            await db.TenderProducts.ExecuteDeleteAsync(ct);
+            await db.Tenders.ExecuteDeleteAsync(ct);
             await transaction.CommitAsync(ct);
 
             return NoContent();
